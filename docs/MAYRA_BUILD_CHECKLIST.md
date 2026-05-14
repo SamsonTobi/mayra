@@ -20,7 +20,7 @@ Several stages can be developed concurrently because they touch disjoint directo
 | **B — Browser adapter** | `apps/orchestrator/mayra_orchestrator/browser/**`; `apps/orchestrator/tests/{unit,integration}/test_browser_*.py` | **T7** | `lane/b-browser` | unstarted |
 | **C — Provider clients** | `apps/orchestrator/mayra_orchestrator/providers/{base.py,grok.py,cloudflare.py,factory.py,_retry.py}`; tests `apps/orchestrator/tests/unit/test_*_provider.py` | **T6** (everything except gemini list_models which is done) | `lane/c-providers` | unstarted |
 | **D — Persistence + Supabase** | `apps/orchestrator/mayra_orchestrator/persistence/**`; `supabase/**`; tests `apps/orchestrator/tests/unit/test_repo_*.py`, `tests/integration/test_supabase_*.py` | **T10** | `lane/d-supabase` | unstarted |
-| **E — Tauri desktop** | `apps/desktop/**` (does not exist yet); `scripts/rename-sidecar.mjs` | **T8** | `lane/e-desktop` | unstarted |
+| **E — Tauri desktop** | `apps/desktop/**`; `scripts/rename-sidecar.mjs` | **T8** (partial) | `main` | `@mayra/desktop` + `src-tauri` Rust helpers/tests on `main`; `Cargo.lock`, `tauri.conf`, capabilities, IPC/plugins still open |
 | **F — Next.js UI** | `apps/web/**` (except files already in `src/lib/{orchestrator-client,sse}.*`); `packages/ui/**` if/when created | **T9** | `lane/f-web` | unstarted |
 | **G — Repo / CI / quality** | `.pre-commit-config.yaml`, `.github/workflows/**`, root `package.json` script additions, `turbo.json` task additions, `scripts/release-pipeline.mjs` | T0 leftovers, **T11 CI + packaging** | `lane/g-ci` | unstarted |
 | **H — Bench harness** | `bench/**`, `tests/fixtures/sites/**`, `apps/web/__bench-only__/**` if needed | **T11 bench** | `lane/h-bench` | unstarted |
@@ -55,7 +55,7 @@ These files are touched by multiple lanes; a lane MUST limit its diff to a small
 - **B** can start now. A’s agent loop will call into B at the end (interface: `BrowserAdapter` Protocol). Until then B exposes `FakeBrowser`-compatible Protocol.
 - **C** can start now. Independent.
 - **D** can start now (table DDL + repos). Wiring into agent loop blocks on A; tests can use direct repo calls.
-- **E** can start now. Sidecar lifecycle integration test blocks on a packaged orchestrator binary (G), but Rust-only tests run today.
+- **E** scaffold merged on `main`: `apps/desktop/` (`package.json`, root `pnpm-lock.yaml`, `src-tauri` lib + unit tests). Run `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` locally; commit `Cargo.lock` when generated. Sidecar spawn integration still blocks on packaged orchestrator (G).
 - **F** can start now. UI mocks the orchestrator over fetch/EventSource; no runtime dependency on A.
 - **G** depends on at least one other lane having scripts/tests to wire. CI matrix can scaffold immediately.
 - **H** independent; eval expectations rely on at least one fixture site.
@@ -423,7 +423,8 @@ Five paths must each have a failing contract test **before** the loop body is wr
 | Python integration (skipped) | 4 | ⏸ awaiting T7 |
 | TS contracts vitest (action schema) | 4 | ✅ green |
 | TS web vitest (`apps/web`) | 5 | ✅ green |
-| **Total green** | **59** | |
+| Desktop manifest (`npm --prefix apps/desktop run test`) | 3 | ✅ green *(not yet wired into root `npm test`)* |
+| **Total green (`npm run test`)** | **59** | |
 
 Modules implemented:
 
@@ -444,9 +445,12 @@ packages/contracts/{schemas/action.schema.json, fixtures/*.json,
 
 apps/web/src/lib/{orchestrator-client.ts, orchestrator-client.test.ts,
                   sse.ts, sse.test.ts}
+
+apps/desktop/{package.json, tests/package-manifest.test.mjs,
+             src-tauri/Cargo.toml, src-tauri/src/lib.rs}
 ```
 
-Not started: `apps/desktop/`, `supabase/`, `bench/`, `scripts/`, `agent-browser` adapter, full agent loop, real provider streaming, structlog wiring, Next.js pages, anything CI.
+Partial **T8 desktop:** shell wiring (`tauri.conf`, capabilities, IPC commands, plugins) still open. Not started: `supabase/`, `bench/`, `scripts/` packaging, `agent-browser` adapter, full agent loop, real provider streaming, structlog wiring, Next.js pages beyond `src/lib`, CI workflows.
 
 ---
 
