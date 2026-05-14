@@ -7,5 +7,6 @@ export default {
   trailingSlash: true,
   assetPrefix: isProd ? undefined : `http://${internalHost}:3000`,
   reactStrictMode: true,
-  experimental: { typedRoutes: true },
+  typedRoutes: true,
+  transpilePackages: ["@mayra/contracts"],
 } satisfies import("next").NextConfig;

@@ -1,0 +1,193 @@
+/* Mayra web shell — vanilla CSS (checklist: minimal, no design system). */
+:root {
+  color-scheme: dark light;
+  --bg: #0f1115;
+  --fg: #e8eaed;
+  --muted: #9aa0a6;
+  --accent: #3b82f6;
+  --border: #2d3139;
+  --risk-low: #22c55e;
+  --risk-med: #eab308;
+  --risk-high: #ef4444;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+a {
+  color: var(--accent);
+}
+
+main.shell {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1.25rem;
+}
+
+h1 {
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #1a1d24;
+  color: var(--fg);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  border-color: #2563eb;
+  background: #1d4ed8;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  background: #14171d;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.badge {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badge-low {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--risk-low);
+}
+.badge-med {
+  background: rgba(234, 179, 8, 0.15);
+  color: var(--risk-med);
+}
+.badge-high {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--risk-high);
+}
+
+textarea,
+input[type="text"],
+input[type="password"],
+input[type="url"] {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0b0d11;
+  color: var(--fg);
+}
+
+.message-user {
+  margin: 0.5rem 0;
+  text-align: right;
+}
+.message-user .bubble {
+  display: inline-block;
+  max-width: 85%;
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px 10px 2px 10px;
+  background: #1e3a5f;
+}
+
+.message-assistant {
+  margin: 0.5rem 0;
+}
+.message-assistant .bubble {
+  display: inline-block;
+  max-width: 92%;
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px 10px 10px 2px;
+  background: #1f232b;
+  white-space: pre-wrap;
+}
+
+.system-row {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0.35rem 0;
+}
+
+.system-row.warn {
+  color: #f59e0b;
+}
+.system-row.error {
+  color: #f87171;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 50;
+}
+
+.modal-panel {
+  max-width: 560px;
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #14171d;
+  padding: 1rem;
+}
+
+.banner {
+  padding: 0.6rem 0.85rem;
+  border-radius: 6px;
+  border: 1px solid #92400e;
+  background: rgba(146, 64, 14, 0.2);
+  color: #fdba74;
+  margin-bottom: 1rem;
+}

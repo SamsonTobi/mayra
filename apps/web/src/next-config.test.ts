@@ -8,7 +8,8 @@ describe("next.config.ts", () => {
     expect(cfg.images).toEqual({ unoptimized: true });
     expect(cfg.trailingSlash).toBe(true);
     expect(cfg.reactStrictMode).toBe(true);
-    expect(cfg.experimental).toEqual({ typedRoutes: true });
+    expect(cfg.typedRoutes).toBe(true);
+    expect(cfg.transpilePackages).toEqual(["@mayra/contracts"]);
     const isProd = process.env.NODE_ENV === "production";
     if (!isProd) {
       expect(cfg.assetPrefix).toMatch(/^http:\/\/[^:]+:3000$/);
