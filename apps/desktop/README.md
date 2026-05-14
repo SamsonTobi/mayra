@@ -1,5 +1,7 @@
 # Mayra desktop (Tauri v2)
 
+**Requires:** [Rust stable](https://rustup.rs/) — `cargo` / `rustc` on `PATH` (see `rust-toolchain.toml` at repo root). Node 20+.
+
 ## Phase 1 — Hello desktop
 
 Windows PowerShell (recommended Phase 1)
@@ -42,3 +44,13 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 Requires Rust stable (`rust-toolchain.toml` at repo root).
+
+### `Cargo.lock` (commit once)
+
+From `apps/desktop`:
+
+```powershell
+cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
+```
+
+Commit `src-tauri/Cargo.lock` so CI and teammates get reproducible Rust deps.
