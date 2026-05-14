@@ -1,12 +1,43 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RemoteDebuggingWizard } from "@/components/onboarding/RemoteDebuggingWizard";
 import { useChromeProbe } from "@/hooks/useChromeProbe";
 
+const LAUNCH_DETECT_DELAY_MS = 2500;
+const SESSION_REFRESH_MS = 5000;
+
 export function BrowserDetectionCard() {
-  const { sessions, error, loading, detect, attempted } = useChromeProbe();
+  const { sessions, error, loading, detect, attempted, lastDetectedAt } = useChromeProbe();
   const [showWizard, setShowWizard] = useState(false);
+  const [autoDetectHint, setAutoDetectHint] = useState<string | null>(null);
+  const launchDetectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (launchDetectTimer.current) {
+        clearTimeout(launchDetectTimer.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (sessions.length === 0) return;
+    const interval = setInterval(() => detect({ silent: true }), SESSION_REFRESH_MS);
+    return () => clearInterval(interval);
+  }, [detect, sessions.length]);
+
+  const scheduleDetectAfterLaunch = (browser: "chrome" | "edge") => {
+    if (launchDetectTimer.current) {
+      clearTimeout(launchDetectTimer.current);
+    }
+    const label = browser === "chrome" ? "Chrome" : "Edge";
+    setAutoDetectHint(`${label} launched. Auto-detecting in a few seconds…`);
+    launchDetectTimer.current = setTimeout(() => {
+      detect();
+      setAutoDetectHint(null);
+    }, LAUNCH_DETECT_DELAY_MS);
+  };
 
   return (
     <section className="card">
@@ -41,10 +72,12 @@ export function BrowserDetectionCard() {
           variant="embedded"
           onBack={() => setShowWizard(false)}
           onDone={() => setShowWizard(false)}
+          onLaunched={scheduleDetectAfterLaunch}
         />
       ) : null}
 
       {error ? <div className="banner">{error}</div> : null}
+      {autoDetectHint ? <p className="muted">{autoDetectHint}</p> : null}
 
       {!attempted ? (
         <p className="muted">
@@ -77,6 +110,12 @@ export function BrowserDetectionCard() {
           </ul>
         </div>
       ))}
+      {lastDetectedAt && sessions.length > 0 ? (
+        <p className="muted">
+          Auto-refreshing every {SESSION_REFRESH_MS / 1000}s while browsers are detected. Last
+          checked {lastDetectedAt.toLocaleTimeString()}.
+        </p>
+      ) : null}
     </section>
   );
 }

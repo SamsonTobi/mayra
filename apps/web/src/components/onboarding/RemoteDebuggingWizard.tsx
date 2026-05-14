@@ -6,6 +6,7 @@ import { getTauriBridge } from "@/lib/tauri";
 type Props = {
   onBack: () => void;
   onDone: () => void;
+  onLaunched?: (browser: "chrome" | "edge") => void;
   /** Compact copy when embedded under Settings (vs full onboarding step). */
   variant?: "onboarding" | "embedded";
 };
@@ -26,7 +27,12 @@ async function copyText(text: string): Promise<void> {
 /**
  * Guided flow for `--remote-debugging-port` (F4). Chrome and Edge use the same DevTools HTTP API.
  */
-export function RemoteDebuggingWizard({ onBack, onDone, variant = "onboarding" }: Props) {
+export function RemoteDebuggingWizard({
+  onBack,
+  onDone,
+  onLaunched,
+  variant = "onboarding",
+}: Props) {
   const embedded = variant === "embedded";
   const [hint, setHint] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -39,8 +45,9 @@ export function RemoteDebuggingWizard({ onBack, onDone, variant = "onboarding" }
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("launch_chromium_remote_debug", { browser, port: DEBUG_PORT });
       setHint(
-        `${browser === "chrome" ? "Chrome" : "Edge"} started on port ${DEBUG_PORT}. Wait a few seconds, then click Detect browsers.`,
+        `${browser === "chrome" ? "Chrome" : "Edge"} started on port ${DEBUG_PORT}. Mayra will detect it automatically in a few seconds.`,
       );
+      onLaunched?.(browser);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -99,8 +106,8 @@ export function RemoteDebuggingWizard({ onBack, onDone, variant = "onboarding" }
       </div>
 
       <p className="muted">
-        After the browser starts, click <strong>Detect browsers</strong> in Settings. If nothing appears,
-        wait a few seconds and try again — the DevTools socket can take a moment to come up.
+        After the browser starts, Mayra auto-detects it. If nothing appears, click{" "}
+        <strong>Detect browsers</strong> again — the DevTools socket can take a moment to come up.
       </p>
       <div className="row">
         <button type="button" className="btn" onClick={onBack}>

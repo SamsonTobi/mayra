@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChromeSession } from "@/lib/chrome-probe";
 import { DEFAULT_CHROME_PROBE_PORTS } from "@/lib/chrome-probe";
 import { getTauriBridge } from "@/lib/tauri";
 
 const DEBOUNCE_MS = 300;
+
+type DetectOptions = { silent?: boolean };
 
 export function useChromeProbe(
   ports: readonly number[] = DEFAULT_CHROME_PROBE_PORTS,
@@ -13,22 +15,26 @@ export function useChromeProbe(
   sessions: ChromeSession[];
   error: string | null;
   loading: boolean;
-  detect: () => void;
+  detect: (options?: DetectOptions) => void;
   attempted: boolean;
+  lastDetectedAt: Date | null;
 } {
   const [sessions, setSessions] = useState<ChromeSession[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [attempted, setAttempted] = useState(false);
+  const [lastDetectedAt, setLastDetectedAt] = useState<Date | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const detect = useCallback(() => {
+  const detect = useCallback((options: DetectOptions = {}) => {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
     debounceRef.current = setTimeout(() => {
       void (async () => {
-        setLoading(true);
+        if (!options.silent) {
+          setLoading(true);
+        }
         setError(null);
         try {
           const bridge = getTauriBridge();
@@ -44,16 +50,27 @@ export function useChromeProbe(
           });
           setSessions(list);
           setAttempted(true);
+          setLastDetectedAt(new Date());
         } catch (e) {
           setSessions([]);
           setError(e instanceof Error ? e.message : String(e));
           setAttempted(true);
         } finally {
-          setLoading(false);
+          if (!options.silent) {
+            setLoading(false);
+          }
         }
       })();
     }, DEBOUNCE_MS);
   }, [ports]);
 
-  return { sessions, error, loading, detect, attempted };
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, []);
+
+  return { sessions, error, loading, detect, attempted, lastDetectedAt };
 }
