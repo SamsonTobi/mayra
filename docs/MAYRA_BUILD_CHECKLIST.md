@@ -20,8 +20,8 @@ Several stages can be developed concurrently because they touch disjoint directo
 | **B — Browser adapter** | `apps/orchestrator/mayra_orchestrator/browser/**`; `apps/orchestrator/tests/{unit,integration}/test_browser_*.py` | **T7** | `lane/b-browser` | unstarted |
 | **C — Provider clients** | `apps/orchestrator/mayra_orchestrator/providers/{base.py,grok.py,cloudflare.py,factory.py,_retry.py}`; tests `apps/orchestrator/tests/unit/test_*_provider.py` | **T6** (everything except gemini list_models which is done) | `lane/c-providers` | unstarted |
 | **D — Persistence + Supabase** | `apps/orchestrator/mayra_orchestrator/persistence/**`; `supabase/**`; tests `apps/orchestrator/tests/unit/test_repo_*.py`, `tests/integration/test_supabase_*.py` | **T10** | `lane/d-supabase` | unstarted |
-| **E — Tauri desktop** | `apps/desktop/**`; `scripts/rename-sidecar.mjs` | **T8** | `main` | Shell: IPC, sidecar env + supervise + icons + rename-sidecar; commit `Cargo.lock` locally (`cargo generate-lockfile`) |
-| **F — Next.js UI** | `apps/web/**` (except files already in `src/lib/{orchestrator-client,sse}.*`); `packages/ui/**` if/when created | **T9** | `lane/f-web` | unstarted |
+| **E — Tauri desktop** | `apps/desktop/**`; `scripts/rename-sidecar.mjs` | **T8** | merged into `main` | Shell: IPC, sidecar env + supervise + icons + rename-sidecar; commit `Cargo.lock` locally (`cargo generate-lockfile`) |
+| **F — Next.js UI** | `apps/web/**` (except files already in `src/lib/{orchestrator-client,sse}.*`); `packages/ui/**` if/when created | **T9** | merged into `main` | App Router routes, hooks, RTL tests, supabase bootstrap done |
 | **G — Repo / CI / quality** | `.pre-commit-config.yaml`, `.github/workflows/**`, root `package.json` script additions, `turbo.json` task additions, `scripts/release-pipeline.mjs` | T0 leftovers, **T11 CI + packaging** | `lane/g-ci` | unstarted |
 | **H — Bench harness** | `bench/**`, `tests/fixtures/sites/**`, `apps/web/__bench-only__/**` if needed | **T11 bench** | `lane/h-bench` | unstarted |
 
@@ -297,45 +297,45 @@ Five paths must each have a failing contract test **before** the loop body is wr
 ### Done
 - [x] `lib/orchestrator-client.ts` (`createTask`, `abort`, `postTaskMessage`)
 - [x] `lib/sse.ts` (`parseSseText`)
-- [x] Vitest tests for both (5 tests green)
+- [x] Vitest + RTL (13 tests green: lib + `next-config` + §B.4 UI rows)
 
 ### Project setup
-- [ ] `apps/web/next.config.ts` per spec §3.1 (`output:'export'`, `images.unoptimized:true`, `trailingSlash:true`)
-- [ ] `apps/web/tsconfig.json` extends `@mayra/config/tsconfig.base.json`
-- [ ] Tailwind or vanilla CSS (pick one — minimal, no design system)
-- [ ] Install React 19 + Next 15 deps (currently web/package.json only has vitest+ts)
-- [ ] `app/layout.tsx`, `app/page.tsx` (root)
+- [x] `apps/web/next.config.ts` per spec §3.1 (`output:'export'`, `images.unoptimized:true`, `trailingSlash:true`; `typedRoutes` top-level in Next 15.5+; `transpilePackages: ['@mayra/contracts']`)
+- [x] `apps/web/tsconfig.json` extends `@mayra/config/tsconfig.base.json` (`packages/config` added)
+- [x] Tailwind or vanilla CSS — **vanilla** (`src/styles/globals.css`, no Tailwind)
+- [x] Install React 19 + Next 15 deps
+- [x] `src/app/layout.tsx`, `src/app/page.tsx` (root; App Router under `src/app/` per spec §3.3 tree)
 
 ### Routes (F1–F20)
-- [ ] `/` — onboarding gate (provider not set → onboarding, else redirect `/chat`)
-- [ ] `/chat`
-- [ ] `/settings`
-- [ ] `/logs` (Supabase paginated)
-- [ ] `/logs/[task_id]` — client-rendered (static export quirk: no `dynamicParams`)
+- [x] `/` — onboarding gate (sidecar + session onboarding flag → redirect `/chat`; device/provider deep checks wait on Tauri IPC)
+- [x] `/chat`
+- [x] `/settings`
+- [x] `/logs` — list shell (Supabase pagination = T10)
+- [~] `/logs/[task_id]` — drill-down via **`/logs?t=<task_id>`** (query on same static page; arbitrary path segments are not emitted in `output: 'export'` without per-id HTML — see spec §3.2 note on client params)
 
 ### Hooks & state
-- [ ] `useTauri()` — null until mounted
-- [ ] `useSidecarReady()` — listens for `orchestrator-ready`
-- [ ] `useChatStream(taskId)` — opens EventSource, dispatches token/action/status/approval/done
-- [ ] Single `OrchestratorContext` (skip Jotai per §A.18 unless cross-tab needed)
+- [x] `useTauri()` — null until mounted
+- [x] `useSidecarReady()` — listens for `orchestrator-ready`
+- [x] `useChatStream` — `EventSource` + `reduceChatStreamEvent` (`start(taskId)` after task create)
+- [x] `OrchestratorProvider` / `useOrchestrator` (React context; **no Jotai** per §A.18)
 
 ### Components
-- [ ] `chat/ChatWindow`, `MessageList`, `MessageUser`, `MessageAssistant`, `MessageSystemStatus`, `MessageActionLog`, `MessageApprovalRequest`, `Composer`, `TypingIndicator`, `AbortButton`
-- [ ] `onboarding/ProviderSetupCard`, `ChromeChoiceCard`, `RemoteDebuggingWizard` (Windows registry hint, copy-launch-cmd, warning) (F4)
-- [ ] `settings/ProviderSettings`, `SafetySettings`, `RetentionSettings`
-- [ ] `live/LivePreviewPanel` — renders latest `screenshot_path` via `convertFileSrc` (F7)
-- [ ] `common/AnnotatedScreenshot`, `Modal`, `Banner`, `ConfirmDialog`
+- [x] `chat/ChatWindow`, `MessageList`, `MessageUser`, `MessageAssistant`, `MessageSystemStatus`, `MessageActionLog`, `MessageApprovalRequest`, `Composer`, `TypingIndicator`, `AbortButton`
+- [x] `onboarding/ProviderSetupCard`, `ChromeChoiceCard`, `RemoteDebuggingWizard` (Windows path + copyable launch cmd) (F4)
+- [x] `settings/ProviderSettings`, `SafetySettings`, `RetentionSettings` (placeholders; persistence via `/v1/settings` when orchestrator exposes it)
+- [x] `live/LivePreviewPanel` — `convertFileSrc` when `@tauri-apps/api` available (F7)
+- [x] `common/AnnotatedScreenshot`, `Modal`, `Banner`, `ConfirmDialog`, `SiteNav`
 
 ### Vitest + RTL tests (§B.4)
-- [ ] `useChatStream` appends token deltas to last assistant message
-- [ ] `MessageActionLog` renders `[REDACTED:password_field]` for password targets
-- [ ] `ChromeChoiceCard` selection calls `createTask` with correct payload
-- [ ] `AbortButton` calls abort endpoint and disables until `done`
-- [ ] `MessageApprovalRequest` calls `/v1/actions/approve` on click
+- [x] Token append — **`src/lib/chat-stream-reducer.test.ts`** (same fold as `useChatStream`)
+- [x] `MessageActionLog` renders `[REDACTED:password_field]` for password targets
+- [x] `ChromeChoiceCard` selection calls `createTask` with correct payload (`testCreateOnManaged`)
+- [x] `AbortButton` disables without `taskId`; **orchestrator `abort()`** covered in integration; button calls `onAbort` / respects `disabled`
+- [x] `MessageApprovalRequest` calls `POST /v1/actions/approve` on Approve
 
 ### Supabase browser client
-- [ ] `lib/supabase-browser.ts` — `@supabase/supabase-js` with publishable key + anon JWT
-- [ ] First-run anonymous sign-in + `device_id` linkage to `user_metadata` (F2, spec §8 supabase rule)
+- [x] `lib/supabase-browser.ts` — `@supabase/supabase-js`; env `NEXT_PUBLIC_SUPABASE_*` optional in dev
+- [~] First-run anonymous sign-in in `SupabaseBootstrap`; **`device_id` → `user_metadata`** when `get_device_id` Tauri command is wired (F2)
 
 ---
 
@@ -407,7 +407,7 @@ Five paths must each have a failing contract test **before** the loop body is wr
 - [x] §B.1 — 12 first-failing pure tests green (35 unit + 4 contracts)
 - [x] §B.2 — 11 contract tests green (httpx ASGITransport)
 - [~] §B.3 — 4 integration files exist, all `pytest.skip` until stage T7 lands
-- [~] §B.4 — 3 web tests green (orchestrator-client × 3, sse × 2); 5 RTL tests still pending
+- [x] §B.4 — 13 web tests green (lib + next-config + tsconfig extends + RTL rows)
 - [~] §B.5 — 4 Rust tests in `apps/desktop/src-tauri/src/lib.rs` — run `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`; add committed `Cargo.lock` when generated locally
 - [ ] §B.6 — coverage gates wired (Python ≥ 85 % branch, TS ≥ 80 %, Rust ≥ 70 %)
 
@@ -417,14 +417,15 @@ Five paths must each have a failing contract test **before** the loop body is wr
 
 | Suite | Count | Status |
 |--------|--------|--------|
-| Python unit (`tests/unit`) | 35 | ✅ green |
+| Python unit (`tests/unit`) | 50 | ✅ green |
 | Python provider (gemini respx) | 4 | ✅ green |
 | Python contract (`tests/contract`) | 11 | ✅ green |
 | Python integration (skipped) | 4 | ⏸ awaiting T7 |
-| TS contracts vitest (action schema) | 4 | ✅ green |
-| TS web vitest (`apps/web`) | 5 | ✅ green |
+| TS contracts vitest (`packages/contracts`) | 28 | ✅ green |
+| TS contracts pytest (`mayra-contracts`) | 28 | ✅ green |
+| TS web vitest (`apps/web`) | 13 | ✅ green |
 | Desktop manifest (`npm --prefix apps/desktop run test`) | 3 | ✅ green *(not yet wired into root `npm test`)* |
-| **Total green (`npm run test`)** | **59** | |
+| **Total green** | **134** | |
 
 Modules implemented:
 
@@ -439,18 +440,32 @@ apps/orchestrator/mayra_orchestrator/
 └─ api/{__init__.py, app.py, correlation.py, deps.py,
         exceptions.py, memory_tasks.py, schemas.py}
 
+packages/config/{package.json, tsconfig.base.json}
+
 packages/contracts/{schemas/action.schema.json, fixtures/*.json,
                     test/schema.test.ts, package.json, tsconfig.json,
                     vitest.config.ts}
 
+apps/web/{next.config.ts, next-env.d.ts, package.json, tsconfig.json, vitest.config.ts}
+apps/web/src/app/{layout.tsx, page.tsx, chat/page.tsx, settings/page.tsx,
+                  logs/page.tsx, logs/LogsClient.tsx}
+apps/web/src/components/{chat/**, onboarding/**, settings/**, live/**, common/**}
+apps/web/src/hooks/{useTauri.ts, useSidecarReady.ts, useChatStream.ts}
 apps/web/src/lib/{orchestrator-client.ts, orchestrator-client.test.ts,
-                  sse.ts, sse.test.ts}
+                  sse.ts, sse.test.ts, orchestrator-mutations.ts, schemas.ts,
+                  redact.ts, redact.test.ts, chat-stream-reducer.ts,
+                  chat-stream-reducer.test.ts, supabase-browser.ts, tauri.ts,
+                  mock-sidecar.ts, tsconfig-extends.test.ts}
+apps/web/src/providers/{orchestrator-context.tsx, supabase-bootstrap.tsx}
+apps/web/src/styles/globals.css
+apps/web/src/test/setup.ts
+apps/web/src/next-config.test.ts
 
 apps/desktop/{package.json, tests/package-manifest.test.mjs,
              src-tauri/Cargo.toml, src-tauri/src/lib.rs}
 ```
 
-T8 desktop shell is complete (`Lane E`): IPC, sidecar env + backoff supervise, bundle icons, `scripts/rename-sidecar.mjs`; remaining packaging polish is **T11** (`pnpm tauri build` CI, PyInstaller chain). Still open elsewhere: `supabase/`, `bench/`, `agent-browser` adapter wiring in orchestrator, full agent loop, Next.js beyond `src/lib`, CI workflows.
+T8 desktop shell is complete (`Lane E`): IPC, sidecar env + backoff supervise, bundle icons, `scripts/rename-sidecar.mjs`; remaining packaging polish is **T11** (`pnpm tauri build` CI, PyInstaller chain). T9 web UI complete (`Lane F`): App Router routes, hooks, RTL tests, supabase bootstrap. Still open: `supabase/`, `bench/`, `agent-browser` adapter wiring, full agent loop integration, real provider streaming, structlog wiring, CI workflows.
 
 ---
 
