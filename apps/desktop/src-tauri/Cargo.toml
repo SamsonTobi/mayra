@@ -3,15 +3,37 @@ name = "mayra-desktop"
 version = "0.1.0"
 edition = "2021"
 publish = false
+default-run = "mayra-desktop"
 
 [lib]
+name = "mayra_desktop_lib"
 path = "src/lib.rs"
 
+[[bin]]
+name = "mayra-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
 [dependencies]
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-shell = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-log = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 base64 = "0.22"
 rand = "0.8"
+keyring = "3.6"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+tokio = { version = "1", features = ["fs", "sync", "time", "macros", "rt-multi-thread"] }
+open = "5"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+log = "0.4"
 
 [dev-dependencies]
-keyring = "3.6"
 regex = "1"
 serde_json = "1"

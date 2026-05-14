@@ -20,7 +20,7 @@ Several stages can be developed concurrently because they touch disjoint directo
 | **B — Browser adapter** | `apps/orchestrator/mayra_orchestrator/browser/**`; `apps/orchestrator/tests/{unit,integration}/test_browser_*.py` | **T7** | `lane/b-browser` | unstarted |
 | **C — Provider clients** | `apps/orchestrator/mayra_orchestrator/providers/{base.py,grok.py,cloudflare.py,factory.py,_retry.py}`; tests `apps/orchestrator/tests/unit/test_*_provider.py` | **T6** (everything except gemini list_models which is done) | `lane/c-providers` | unstarted |
 | **D — Persistence + Supabase** | `apps/orchestrator/mayra_orchestrator/persistence/**`; `supabase/**`; tests `apps/orchestrator/tests/unit/test_repo_*.py`, `tests/integration/test_supabase_*.py` | **T10** | `lane/d-supabase` | unstarted |
-| **E — Tauri desktop** | `apps/desktop/**`; `scripts/rename-sidecar.mjs` | **T8** (partial) | `main` | `@mayra/desktop` + `src-tauri` Rust helpers/tests on `main`; `Cargo.lock`, `tauri.conf`, capabilities, IPC/plugins still open |
+| **E — Tauri desktop** | `apps/desktop/**`; `scripts/rename-sidecar.mjs` | **T8** (mostly) | `lane/e-desktop-t8-shell` | App shell: `main.rs`, plugins, IPC, `tauri.conf`, capabilities, `dist/` stub UI; `Cargo.lock` + sidecar env/backoff + bundled icons still open |
 | **F — Next.js UI** | `apps/web/**` (except files already in `src/lib/{orchestrator-client,sse}.*`); `packages/ui/**` if/when created | **T9** | `lane/f-web` | unstarted |
 | **G — Repo / CI / quality** | `.pre-commit-config.yaml`, `.github/workflows/**`, root `package.json` script additions, `turbo.json` task additions, `scripts/release-pipeline.mjs` | T0 leftovers, **T11 CI + packaging** | `lane/g-ci` | unstarted |
 | **H — Bench harness** | `bench/**`, `tests/fixtures/sites/**`, `apps/web/__bench-only__/**` if needed | **T11 bench** | `lane/h-bench` | unstarted |
@@ -55,7 +55,7 @@ These files are touched by multiple lanes; a lane MUST limit its diff to a small
 - **B** can start now. A’s agent loop will call into B at the end (interface: `BrowserAdapter` Protocol). Until then B exposes `FakeBrowser`-compatible Protocol.
 - **C** can start now. Independent.
 - **D** can start now (table DDL + repos). Wiring into agent loop blocks on A; tests can use direct repo calls.
-- **E** scaffold merged on `main`: `apps/desktop/` (`package.json`, root `pnpm-lock.yaml`, `src-tauri` lib + unit tests). Run `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` locally; commit `Cargo.lock` when generated. Sidecar spawn integration still blocks on packaged orchestrator (G).
+- **E** — Desktop: run `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` when Rust is installed; commit `Cargo.lock` via `cargo generate-lockfile`. Sidecar packaging (`mayra-orchestrator`) still lands in lane G; backoff/env wiring optional follow-ups.
 - **F** can start now. UI mocks the orchestrator over fetch/EventSource; no runtime dependency on A.
 - **G** depends on at least one other lane having scripts/tests to wire. CI matrix can scaffold immediately.
 - **H** independent; eval expectations rely on at least one fixture site.
@@ -245,44 +245,44 @@ Five paths must each have a failing contract test **before** the loop body is wr
 
 ## Stage T8 — Tauri shell (`apps/desktop`)   `[lane: E]`
 
-> `@mayra/desktop` package + `src-tauri` Rust helpers landed; full Tauri app, capabilities, and commands still todo.
+> Tauri app entry (`main.rs`), config, capabilities, and IPC commands are implemented; `Cargo.lock`, richer sidecar env, crash backoff, and release icons/bundle polish remain.
 
 ### Project setup
-- [x] `apps/desktop/package.json` (only `scripts.tauri = "tauri"` + dev deps)
-- [~] `apps/desktop/src-tauri/Cargo.toml`, `Cargo.lock` — `Cargo.toml` + tests in `src/lib.rs`; commit `Cargo.lock` after `cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml` where Rust is installed (sandbox had no `cargo`).
-- [ ] `tauri.conf.json` per spec §2.1 (NSIS, embedBootstrapper, currentUser, updater inactive)
-- [ ] CSP: `default-src 'self'`, `connect-src 'self' http://127.0.0.1:* https://*.supabase.co`, `img-src 'self' data: asset: https://*.supabase.co`
-- [ ] `app.security.assetProtocol.scope = ["$APPLOCALDATA/Mayra/screenshots/**"]` (spec §C.3)
+- [x] `apps/desktop/package.json` (`tauri`, `dev`, `build`, `sidecar:build` stub, tests)
+- [~] `apps/desktop/src-tauri/Cargo.toml`, `Cargo.lock` — commit `Cargo.lock` after `cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml` where Rust is installed (CI/agent hosts without `cargo` skip).
+- [x] `tauri.conf.json` per spec §2.1 (NSIS, embedBootstrapper, currentUser, updater inactive)
+- [x] CSP: `default-src 'self'`, `connect-src 'self' http://127.0.0.1:* https://*.supabase.co`, `img-src 'self' data: asset: https://*.supabase.co`
+- [x] `app.security.assetProtocol.scope = ["$APPLOCALDATA/Mayra/screenshots/**"]` (spec §C.3)
 
 ### Capabilities (split per surface, spec §2.2)
-- [ ] `capabilities/main-window.json`
-- [ ] `capabilities/sidecar.json` — `shell:allow-execute` with arg validators (`^--port=\d{4,5}$`, `^--token=…$`, `^--data-dir=…$`)
-- [ ] `capabilities/secure-store.json` (keyring only, no Stronghold)
-- [ ] `capabilities/notifications.json`
-- [ ] `capabilities/updater.json` (declared but inactive)
+- [x] `capabilities/main-window.json`
+- [x] `capabilities/sidecar.json` — `shell:allow-execute` with arg validators (`^--port=\d{4,5}$`, `^--token=…$`, `^--data-dir=…$`)
+- [x] `capabilities/secure-store.json` (reserved for future plugin IPC; Rust uses `keyring` crate directly today)
+- [x] `capabilities/notifications.json`
+- [x] `capabilities/updater.json` (declared but inactive in `tauri.conf`)
 
 ### Rust commands (spec §2.3, narrow surface)
-- [ ] `start_sidecar` → returns `{ port, token }`
-- [ ] `stop_sidecar`
-- [ ] `save_provider_key(provider, key)` → keyring + sidecar restart
-- [ ] `provider_key_status(provider)` → `{ configured, last4 }`
-- [ ] `get_device_id`
-- [ ] `open_data_dir`
-- [ ] `notify(title, body)`
-- [ ] `os_open_external(url)` — allowlist `https://*.supabase.co`
+- [x] `start_sidecar` → returns `{ port, token }`
+- [x] `stop_sidecar`
+- [x] `save_provider_key(provider, key)` → keyring + sidecar restart
+- [x] `provider_key_status(provider)` → `{ configured, last4 }`
+- [x] `get_device_id`
+- [x] `open_data_dir`
+- [x] `notify(title, body)`
+- [x] `os_open_external(url)` — allowlist `https://*.supabase.co`
 
 ### Sidecar lifecycle (`sidecar.rs`, spec §2.4)
-- [~] Free-port allocator + 48-byte random token — pure helpers `pick_unused_loopback_port`, `generate_sidecar_token` in `src-tauri/src/lib.rs`; shell wiring todo
-- [ ] Spawn orchestrator with env (provider keys b64, data dir, Supabase vars)
-- [ ] Health-poll `/healthz` 200 ms × 50 → emit `orchestrator-ready { port, token }`
+- [x] Free-port allocator + 48-byte random token — `pick_unused_loopback_port`, `generate_sidecar_token` in `lib.rs`
+- [~] Spawn orchestrator with CLI args (`--port`, `--token`, `--data-dir`); provider/Supabase env injection still orchestrator packaging lane
+- [x] Health-poll `/healthz` 200 ms × 50 → emit `orchestrator-ready { port, token }`
 - [ ] Backoff restart on crash (1, 2, 4, 8 s) → `orchestrator-failed`
-- [ ] On `RunEvent::ExitRequested` → `POST /v1/shutdown` → wait 2 s → `child.kill()`
+- [~] On app teardown (`RunEvent::Exit`): `stop_sidecar_inner` → `POST /v1/shutdown` → wait 2 s → `child.kill()` (spec text says `ExitRequested`; hook is `Exit` so shutdown runs once)
 
 ### Other plugins
-- [ ] `tauri-plugin-single-instance` (focus existing window) (F1)
-- [ ] `tauri-plugin-keyring` for device id + provider keys (no `tauri-plugin-store`!)
-- [ ] `tauri-plugin-log` file rotation in app data dir
-- [ ] `tauri-plugin-notification` for OTP / retention warnings
+- [x] `tauri-plugin-single-instance` (focus existing window) (F1)
+- [~] Device id + provider keys via Rust `keyring` crate (no `tauri-plugin-store`; plugin wrapper optional)
+- [x] `tauri-plugin-log` — default targets include rotated `LogDir` (app log dir per OS)
+- [x] `tauri-plugin-notification` for OTP / retention warnings
 
 ### Rust tests (`cargo test`)
 - [x] `picks_an_unused_loopback_port_and_releases_it`
@@ -450,7 +450,7 @@ apps/desktop/{package.json, tests/package-manifest.test.mjs,
              src-tauri/Cargo.toml, src-tauri/src/lib.rs}
 ```
 
-Partial **T8 desktop:** shell wiring (`tauri.conf`, capabilities, IPC commands, plugins) still open. Not started: `supabase/`, `bench/`, `scripts/` packaging, `agent-browser` adapter, full agent loop, real provider streaming, structlog wiring, Next.js pages beyond `src/lib`, CI workflows.
+Partial **T8 desktop:** crash backoff, sidecar env injection, `Cargo.lock`, and NSIS bundle icons are still open; core shell (`main.rs`, IPC, plugins, `tauri.conf`, capabilities) is in flight on `lane/e-desktop-t8-shell`. Not started: `supabase/`, `bench/`, `scripts/` packaging, `agent-browser` adapter, full agent loop, real provider streaming, structlog wiring, Next.js pages beyond `src/lib`, CI workflows.
 
 ---
 

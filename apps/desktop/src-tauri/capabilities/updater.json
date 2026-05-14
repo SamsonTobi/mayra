@@ -1,0 +1,6 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/capability.json",
+  "identifier": "updater",
+  "windows": ["main"],
+  "permissions": ["updater:default"]
+}

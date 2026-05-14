@@ -1,4 +1,7 @@
-//! Sidecar helpers (pure Rust; Tauri wiring lands later).
+//! Mayra desktop Rust library: IPC commands, sidecar runtime, and pure helpers.
+
+pub mod commands;
+pub mod sidecar;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;

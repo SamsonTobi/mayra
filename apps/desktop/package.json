@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "test": "node --test ./tests/package-manifest.test.mjs",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "sidecar:build": "node -e \"console.log('[mayra/desktop] sidecar:build stub — orchestrator binary comes from packaging lane');\""
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
