@@ -1,0 +1,14 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**", "next.config.*", "tsconfig*.json", "package.json"],
+      "outputs": ["out/**", "dist/**"]
+    },
+    "lint": { "inputs": ["src/**", "*.json"] },
+    "typecheck": { "inputs": ["src/**", "tsconfig*.json"] },
+    "test": { "inputs": ["src/**", "test/**"] },
+    "dev": { "cache": false, "persistent": true }
+  }
+}

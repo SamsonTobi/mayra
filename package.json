@@ -1,0 +1,17 @@
+{
+  "name": "mayra",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": { "node": ">=20.11" },
+  "scripts": {
+    "contracts:codegen": "npm --prefix packages/contracts run contracts:codegen",
+    "contracts:check": "node scripts/contracts-check.mjs",
+    "test:contracts": "npm --prefix packages/contracts run test",
+    "test:contracts:py": "uv run --package mayra-contracts pytest packages/contracts/python/tests -q",
+    "test:web": "npm --prefix apps/web run test",
+    "test:py": "uv run --extra dev --directory apps/orchestrator pytest -m \"not integration\"",
+    "test:py:all": "uv run --extra dev --directory apps/orchestrator pytest",
+    "test": "npm run test:contracts && npm run test:contracts:py && npm run test:py && npm run test:web",
+    "verify": "npm run contracts:check && npm run test"
+  }
+}
