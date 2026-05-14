@@ -12,8 +12,8 @@ export function BrowserDetectionCard() {
     <section className="card">
       <h2>Browsers (remote debugging)</h2>
       <p className="muted">
-        Scan <code>127.0.0.1</code> ports 9222–9230 for Chrome DevTools (
-        <code>--remote-debugging-port</code>).
+        Scan <code>127.0.0.1</code> ports 9222–9230 for Chromium DevTools (<strong>Chrome</strong>,{" "}
+        <strong>Edge</strong>, etc.) using <code>--remote-debugging-port</code>.
       </p>
       <div
         className="row"
