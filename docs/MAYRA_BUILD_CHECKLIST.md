@@ -248,7 +248,7 @@ Five paths must each have a failing contract test **before** the loop body is wr
 > Whole `apps/desktop/` directory does not exist yet — all rows below are todos.
 
 ### Project setup
-- [ ] `apps/desktop/package.json` (only `scripts.tauri = "tauri"` + dev deps)
+- [x] `apps/desktop/package.json` (only `scripts.tauri = "tauri"` + dev deps)
 - [ ] `apps/desktop/src-tauri/Cargo.toml`, `Cargo.lock`
 - [ ] `tauri.conf.json` per spec §2.1 (NSIS, embedBootstrapper, currentUser, updater inactive)
 - [ ] CSP: `default-src 'self'`, `connect-src 'self' http://127.0.0.1:* https://*.supabase.co`, `img-src 'self' data: asset: https://*.supabase.co`
