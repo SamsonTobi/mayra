@@ -1,0 +1,17 @@
+[package]
+name = "mayra-desktop"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+base64 = "0.22"
+rand = "0.8"
+
+[dev-dependencies]
+keyring = "3.6"
+regex = "1"
+serde_json = "1"
