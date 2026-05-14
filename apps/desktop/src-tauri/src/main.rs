@@ -1,9 +1,22 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::Arc;
+
+use mayra_desktop_lib::sidecar::{SidecarSlot, SidecarState};
 use tauri::Manager;
+use tokio::sync::Mutex;
+
+fn stop_sidecar_blocking(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    tauri::async_runtime::block_on(async move {
+        if let Some(state) = handle.try_state::<SidecarState>() {
+            let _ = mayra_desktop_lib::sidecar::stop_sidecar_inner(&handle, state.inner()).await;
+        }
+    });
+}
 
 fn main() {
-    let sidecar_state = std::sync::Arc::new(tokio::sync::Mutex::new(None));
+    let sidecar_state: SidecarState = Arc::new(Mutex::new(SidecarSlot::default()));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -29,19 +42,10 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error building Mayra desktop application")
         .run(|app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
-                let handle = app_handle.clone();
-                tauri::async_runtime::block_on(async move {
-                    if let Some(state) =
-                        handle.try_state::<mayra_desktop_lib::sidecar::SidecarState>()
-                    {
-                        let _ = mayra_desktop_lib::sidecar::stop_sidecar_inner(
-                            &handle,
-                            state.inner(),
-                        )
-                        .await;
-                    }
-                });
+            match event {
+                tauri::RunEvent::ExitRequested { .. } => stop_sidecar_blocking(app_handle),
+                tauri::RunEvent::Exit => stop_sidecar_blocking(app_handle),
+                _ => {}
             }
         });
 }
