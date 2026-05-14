@@ -442,11 +442,13 @@ packages/contracts/{schemas/action.schema.json, fixtures/*.json,
                     test/schema.test.ts, package.json, tsconfig.json,
                     vitest.config.ts}
 
+apps/web/{next.config.ts, package.json, tsconfig.json, vitest.config.ts}
 apps/web/src/lib/{orchestrator-client.ts, orchestrator-client.test.ts,
                   sse.ts, sse.test.ts}
+apps/web/src/next-config.test.ts
 ```
 
-Not started: `apps/desktop/`, `supabase/`, `bench/`, `scripts/`, `agent-browser` adapter, full agent loop, real provider streaming, structlog wiring, Next.js pages, anything CI.
+Not started: `apps/desktop/`, `supabase/`, `bench/`, `scripts/`, `agent-browser` adapter, full agent loop, real provider streaming, structlog wiring, Next.js `app/` routes, anything CI.
 
 ---
 
