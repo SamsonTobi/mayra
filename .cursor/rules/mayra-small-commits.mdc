@@ -1,0 +1,16 @@
+---
+description: Prefer many small git commits instead of large dumps; one logical slice per commit.
+alwaysApply: true
+---
+
+# Small commits (Mayra)
+
+When implementing work for this repo:
+
+1. **Commit often** — after each red→green step, docs/checklist touch, or isolated refactor that still passes tests.
+2. **Tiny scope per commit** — one concern when practical: e.g. “add message.schema.json + fixtures”, then “vitest loop all schemas”, then “mayra-contracts package”, then “orchestrator re-export”. Avoid mixing unrelated files (desktop + contracts + random formatting).
+3. **Message style** — imperative subject, ≤72 chars when possible; body only when context isn’t obvious (`why` / `what broke`).
+4. **Checklist + rules in same series** — if you complete `docs/MAYRA_BUILD_CHECKLIST.md` rows or add `.cursor/rules`, include those updates in the relevant commit (or the immediately following doc-only commit), not left stale across a mega-commit.
+5. **Generated output** — after `npm run contracts:codegen`, commit `packages/contracts/src/generated.ts` in its own commit if the diff is large, paired with the schema change commit when small.
+
+Do **not** squash everything into one commit unless the user explicitly asks.

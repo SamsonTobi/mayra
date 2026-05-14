@@ -1,0 +1,82 @@
+---
+description: FastAPI + Python orchestrator production rules for Mayra
+globs: "apps/orchestrator/**,**/pyproject.toml,**/*.py"
+alwaysApply: false
+---
+
+# FastAPI Orchestration Rules
+
+FastAPI is Mayra's local orchestration engine. It owns: model client calls, action schema validation, secrets in memory, the abortable agent loop, streaming to the UI, the `agent-browser` adapter, and privileged Supabase writes.
+
+## Project Toolchain
+
+- Python `>=3.12`. Required for `asyncio.TaskGroup`, `typing.Self`, and good Pydantic v2 performance.
+- Dependency mgmt: **uv** (`uv add`, `uv sync`, `uv run`). The orchestrator is a uv workspace member.
+- Lint/format: **ruff** with `select = ["E","F","I","B","UP","ASYNC","S","SIM","RUF"]`, line length 100.
+- Type check: **mypy --strict** or **pyright strict**. Pick one and keep it; do not mix.
+- Test: **pytest** + **pytest-asyncio** + **respx** (mock httpx) + **anyio**.
+- Logging: **structlog** with JSON renderer in production, console renderer in dev. Bind a `correlation_id` per request/task.
+- HTTP client: a single **httpx.AsyncClient** per provider, created in `lifespan`. Set explicit `timeout=httpx.Timeout(connect=5, read=60, write=15, pool=5)` — httpx's default is no timeout and will hang the agent loop.
+
+## API Shape
+
+- Every request/response body is a Pydantic v2 `BaseModel` with `model_config = ConfigDict(extra='forbid', frozen=True, strict=True)`. No `Dict[str, Any]` payloads.
+- Use `Literal` and `StrEnum` for action types, providers, risk levels, statuses. The orchestrator must reject unknown values at the parsing boundary.
+- Settings via `pydantic-settings.BaseSettings` reading `MAYRA_*` env vars. Tauri passes `MAYRA_PORT`, `MAYRA_TOKEN`, `MAYRA_LOG_DIR`, `MAYRA_PROVIDER_KEYS_BASE64` (one-shot, wiped after read).
+- Routers split by concern: `/healthz`, `/v1/sessions`, `/v1/tasks`, `/v1/chat/stream` (SSE), `/v1/actions/approve`, `/v1/settings`. Mount under a `/v1` prefix from day one.
+- Dependency injection (`Depends`) for: settings, the auth context (Tauri bearer token check), the active model client, the browser adapter, the Supabase client. Never use module-level globals for these.
+
+## Lifespan & Resource Ownership
+
+- Use `@asynccontextmanager` `lifespan(app)`, not the deprecated `@app.on_event("startup")`. Create and tear down: httpx clients per provider, the `agent-browser` adapter, the Supabase client, the structured-log file sink, and a `TaskRegistry` for in-flight agent runs.
+- Build one provider-client factory: `get_model_client(provider) -> ModelClient`. Use LiteLLM only if its abstraction holds for all three providers (Cloudflare Workers AI, Gemini, Grok); otherwise write three thin adapters with a shared `ModelClient` Protocol. Do not write a "universal" wrapper that hides provider-specific features.
+
+## Concurrency, Cancellation & Backpressure
+
+- One Uvicorn worker. The agent loop is stateful — multi-worker breaks session memory.
+- Long-running tasks (the agent step loop) live in a `TaskRegistry: dict[task_id, asyncio.Task]`. The `/v1/tasks/{id}/abort` endpoint cancels the task with `task.cancel()` and awaits its `CancelledError`. The loop body MUST be cancellation-safe: every `await` is a checkpoint, no `try: ... except Exception:` swallowing of `CancelledError`.
+- Use `asyncio.TaskGroup` for fan-out (screenshot + accessibility tree + history fetch in parallel before each model call).
+- Per-provider concurrency: `asyncio.Semaphore(n)` where `n` matches the free-tier rate limit. Combine with a token-bucket rate limiter (`aiolimiter.AsyncLimiter(10, 60)` for "10 req/min").
+- Step budget enforcement and retry counts live in the task state, not in counters scattered through the loop. Centralize in a `StepBudget` dataclass.
+
+## Streaming
+
+- Use **sse-starlette** `EventSourceResponse` for chat token streams and action log events. Send `event:` discriminators (`token`, `action`, `status`, `done`, `error`).
+- For bidirectional needs (the UI sends "abort" or "approve" mid-stream) use a single WebSocket at `/v1/ws/sessions/{id}`. Keep SSE for read-only streams — it's cheaper and survives proxy quirks.
+- Always include a keepalive: 15s comment lines on SSE, or `ping`/`pong` on WebSocket. The Tauri webview disconnects idle sockets.
+
+## Auth Between Tauri and FastAPI
+
+- Bind to `127.0.0.1` only. Reject any request whose `Host` header is not `127.0.0.1:<port>` or `localhost:<port>`.
+- A single startup-generated bearer token gates every non-`/healthz` endpoint. Token is passed from Tauri via stdin or `MAYRA_TOKEN` env var, never via argv.
+- CORS: `allow_origins=["tauri://localhost", "http://localhost:3000"]` in dev, `["tauri://localhost"]` (or the production custom protocol origin) in prod. `allow_credentials=True` requires explicit origins — never combine with `["*"]`.
+
+## Secrets
+
+- Provider API keys arrive from Tauri secure store on demand via `POST /internal/keys/rotate` (token-gated). Keep in `dict[Provider, SecretStr]` in memory only. Never log, never echo in error messages, never write to disk.
+- Use `pydantic.SecretStr` so accidental `repr()` or JSON serialization masks the value.
+- Supabase: the orchestrator uses the **service-role** key for privileged writes (event logs, screenshots metadata) and the user's anonymous session JWT for user-scoped reads. The service-role key never leaves the orchestrator process.
+
+## Error Handling
+
+- Define a `MayraError` hierarchy: `ProviderError`, `ActionValidationError`, `BrowserError`, `BudgetExhaustedError`, `UserInterventionRequired`. Map each to a stable HTTP status + machine-readable `code` field.
+- A single `@app.exception_handler` converts to the JSON shape `{ "code": "...", "message": "...", "correlation_id": "..." }`.
+- Never return raw stack traces. Log the traceback with `structlog.exception()` keyed by `correlation_id`.
+
+## Background Tasks
+
+- `BackgroundTasks` is fine for fire-and-forget post-response work (e.g. uploading a screenshot to Supabase after the action log row is written). It is **not** suitable for the agent loop — it has no cancellation, no progress, no observability. Use the `TaskRegistry` pattern above.
+
+## AI-Prone Mistakes To Reject
+
+- Calling `requests` (sync) or omitting `timeout=` on `httpx.AsyncClient`. Both will block the loop or hang on a stuck provider.
+- Catching `Exception` (or worse, bare `except:`) in the agent loop — swallows `CancelledError` and makes abort silently fail.
+- Returning a raw dict instead of a Pydantic `response_model` — loses validation, breaks the contracts package consumers.
+- Storing provider API keys in `.env` files committed to the repo.
+- Using `allow_origins=["*"]` with `allow_credentials=True`.
+- Spawning `agent-browser` directly from a request handler without registering the task and step budget.
+- Mounting `agent-browser` actions as a generic `exec` endpoint that takes a free-form command string — actions must go through the validated schema.
+- Running multiple Uvicorn workers (`--workers 2+`) — fragments the session state.
+- Writing the agent loop as a generator that the route body iterates — makes cancellation and structured logging much harder than a plain `async def` with explicit checkpoints.
+
+Sources: https://fastapi.tiangolo.com/advanced/events/, https://fastapi.tiangolo.com/tutorial/cors/, https://fastapi.tiangolo.com/advanced/websockets/, https://docs.pydantic.dev/latest/concepts/models/, https://www.python-httpx.org/async/, https://docs.astral.sh/uv/concepts/projects/workspaces/, https://www.structlog.org/en/stable/, https://github.com/sysid/sse-starlette.

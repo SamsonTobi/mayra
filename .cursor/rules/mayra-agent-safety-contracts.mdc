@@ -1,0 +1,90 @@
+---
+description: Action schemas, risk classification, HITL approval, and audit rules for the Mayra agent loop
+globs: "apps/orchestrator/**,packages/contracts/**,**/actions/**,**/safety/**"
+alwaysApply: true
+---
+
+# Mayra Agent Safety Contracts
+
+Model output is hostile input. Every action the model proposes is validated, classified, possibly approved by the user, logged, and only then executed. There is no path from a model response to an `agent-browser` command that skips this pipeline.
+
+## Action Schema (v1)
+
+- Allowed action types: `click`, `type`, `scroll`, `wait`, `navigate`. Anything else is rejected at validation time, including: `eval`, `download`, `upload`, `cookies`, `storage`, `network`, `clipboard`, `keyboard inserttext`, `mouse *`, `set headers`, `set credentials`, `addinitscript`.
+- Required fields on every action: `action`, `target_ref`, `value`, `risk`, `reason`. Missing or extra fields fail validation (`extra='forbid'` on the Pydantic model).
+- `target_ref` is either an `agent-browser` ref (`@e\d+`) from the most recent snapshot, or one of the constrained semantic locators (`role:button[name=...]`, `text:...`, `label:...`). Raw CSS selectors and XPath are rejected.
+- `value` is `null` for actions that don't need it (`click`, `wait` with selector). For `type`/`navigate` it is a string ≤ 2048 chars and is redacted before logging if the target ref points to a password/secret field (detected via the accessibility tree).
+- `risk` ∈ {`low`, `medium`, `high`}. Model-provided risk is advisory; the orchestrator re-classifies and uses the **max** of model-suggested and policy-classified risk.
+- `reason` is free-form ≤ 280 chars, shown verbatim in the action log card.
+
+The schema lives in `packages/contracts/actions.schema.json`. Pydantic models in Python and TS types in the UI are generated from it. Both load the same fixtures in tests.
+
+## Validation Pipeline
+
+1. Parse model output (chat reply + JSON action block). On JSON parse failure or schema failure, send **one** repair message ("your previous response did not validate against the action schema; resend valid JSON only"). On second failure, abort the task with `BudgetExhaustedError(reason='repair_budget')`.
+2. Verify the ref exists in the latest snapshot (taken ≤ 1 action ago). If not, force a re-snapshot before retrying.
+3. Re-classify risk (see below). Promote risk if needed.
+4. If `risk == 'high'`, gate on user approval. If `risk in {'low','medium'}` and the action is not in a forced-confirm category, execute.
+
+## Risk Classification (orchestrator, not the model)
+
+Mark as `high` if any of the following hold:
+
+- Target element text or accessible name contains (case-insensitive): `delete`, `remove`, `pay`, `purchase`, `checkout`, `confirm`, `submit`, `save changes`, `transfer`, `send money`, `disable`, `deactivate`.
+- Action would submit a form on a domain matching a configurable sensitive-domain list (banking, payments, account settings paths).
+- Target ref maps to an `input[type=file]`, `input[type=password]` (typing into), or a button inside a `<form>` whose action handles money/account changes.
+- Action is `navigate` to a domain not on `--allowed-domains` for the task.
+- Snapshot freshness is stale (page changed since last snapshot and the orchestrator hasn't reconciled).
+- Model emitted any `agent-browser` capability we deny by default (eval, download, upload, clipboard, cookies, storage, network route, init script).
+
+When in doubt, classify high. False positives cost a click; false negatives cost the user's bank account.
+
+## Human-In-The-Loop (HITL)
+
+- High-risk actions block the agent loop and emit an `approval_request` SSE event with: the action payload (value-redacted if sensitive), the annotated screenshot (numbered ref labels), and the natural-language reason.
+- The UI surfaces a modal with the annotated screenshot, the action description, and **Approve / Reject** buttons. Approval requires an explicit click; no "remember this choice" for high-risk categories.
+- 2FA / OTP screens: detect by accessibility role + input pattern (`role=textbox name~="code|otp|verification"`). Pause the loop, fire a Tauri desktop notification, post a `system_status` message. Never ask the model to invent or recall an OTP.
+- Manual takeover: if the user interacts with the managed Chrome window mid-task, pause, re-snapshot, and require explicit resume unless the new snapshot's DOM fingerprint matches the previous one (then auto-resume after a 30-second idle).
+
+## Budgets & Limits (enforced server-side)
+
+- Per-task step budget: 25–40 (configurable per benchmark). Each model call counts as one step regardless of retries.
+- Per-step repair budget: 1 (one repair attempt for malformed JSON, then abort).
+- Per-step action retry budget: 2 (e.g. ref disappeared, re-snapshot and try again).
+- Global model throttle: 10–12 req/min default, per-provider semaphore matching free-tier limits. Use a token-bucket limiter so bursts don't break the limit.
+- Budget exhaustion ends the task cleanly with a `system_status` message; it does not crash the loop.
+
+## Hard Abort
+
+- The `/v1/tasks/{id}/abort` endpoint cancels the asyncio task immediately. The browser adapter must have a synchronous "stop" that interrupts any pending CDP command on the next event-loop tick.
+- Abort is idempotent: calling abort on an already-cancelled or completed task returns 200 with the final status.
+
+## Translating Validated Actions to `agent-browser`
+
+- One pure function: `to_agent_browser_command(action: Action) -> list[str]`. No string interpolation of model output into shell commands.
+- Allowed mappings (v1 only): `click @e3` ← `Action(action='click', target_ref='@e3')`; `fill @e7 "<value>"` ← `Action(action='type', target_ref='@e7', value=...)`; `scroll <dir> <px>` ← `Action(action='scroll', value='down:400')`; `wait <selector|ms>` ← `Action(action='wait', target_ref='@e2')`; `navigate <url>` ← `Action(action='navigate', value='https://...')` only when domain matches `--allowed-domains`.
+- Execute via `agent-browser` with `--json --session $task_id`. Parse the JSON result. On non-2xx exit or `error` key in JSON, surface as `BrowserError`.
+- Never pass `--no-auto-dialog`, never invoke `chat`, never call `eval`, never enable `network route`/`storage *`/`cookies set` from model output.
+
+## Logging, Audit, Privacy
+
+- Every step emits a structured log: `{ correlation_id, task_id, step, observation_hash, intended_action, executed_action, result, latency_ms, provider, model, retries }`. The intended/executed distinction matters for the thesis evaluation.
+- Redaction rules applied **before** any UI render or Supabase write:
+  - API keys, bearer tokens, anything matching `^sk-|^sb_secret_|^[A-Za-z0-9_-]{40,}$` heuristically.
+  - Password field values (always redacted to `"[REDACTED]"`).
+  - OTP/2FA codes (always redacted).
+  - Cookie/Authorization headers from any HAR/network output.
+- Logs are append-only. The orchestrator never edits a previous log row. Corrections are new rows with a `corrects_step` reference.
+- Memory: session-bound only for v1. No vector store, no cross-task memory. The orchestrator clears session state on task completion or user "new chat".
+
+## AI-Prone Mistakes To Reject
+
+- Trusting the model's `risk` field without re-classification.
+- Accepting a CSS selector or XPath from model output instead of the ref/locator schema.
+- Skipping snapshot freshness checks ("the ref was valid 5 actions ago, it's probably fine").
+- Letting a `KeyError` or `JSONDecodeError` from model parsing become a 500 — wrap it in a repair-or-abort path.
+- Logging the full request/response body of the model call without redaction.
+- Adding new actions (`eval`, `download`, etc.) to v1 because "the model needs them" — extend the schema deliberately, with risk rules, in a new contracts version.
+- Implementing approval as a UI-only check — it must be enforced in the orchestrator so a compromised UI bundle cannot bypass it.
+
+Sources: `MAYRA_PRD.md`, https://github.com/vercel-labs/agent-browser, https://docs.pydantic.dev/latest/concepts/strict_mode/.

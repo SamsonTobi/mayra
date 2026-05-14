@@ -1,0 +1,88 @@
+---
+description: Next.js 15 static export rules for the Mayra Tauri UI
+globs: "apps/web/**,**/next.config.*"
+alwaysApply: false
+---
+
+# Next.js Static Export Rules (Tauri Frontend)
+
+Mayra's UI is a static-exported Next.js 15 (App Router) app loaded by the Tauri webview. There is no Node.js server at runtime. The bundle ships inside the installer.
+
+## next.config Required Shape
+
+```ts
+// apps/web/next.config.ts
+const isProd = process.env.NODE_ENV === 'production';
+const internalHost = process.env.TAURI_DEV_HOST || 'localhost';
+
+export default {
+  output: 'export',                 // mandatory for Tauri
+  images: { unoptimized: true },    // next/image needs a server otherwise
+  trailingSlash: true,              // emits /route/index.html, matches Tauri asset:// expectations
+  assetPrefix: isProd ? undefined : `http://${internalHost}:3000`, // mobile dev / TAURI_DEV_HOST
+  reactStrictMode: true,
+  experimental: { typedRoutes: true },
+} satisfies import('next').NextConfig;
+```
+
+In `src-tauri/tauri.conf.json`:
+
+```json
+{
+  "build": {
+    "beforeDevCommand": "pnpm --filter @mayra/web dev",
+    "beforeBuildCommand": "pnpm --filter @mayra/web build",
+    "devUrl": "http://localhost:3000",
+    "frontendDist": "../web/out"
+  }
+}
+```
+
+## Forbidden in Static Export (will silently break or fail build)
+
+- Route Handlers that read `Request` (only `GET` returning static data is supported).
+- Server Actions, `cookies()`, `headers()`, `draftMode()`, rewrites, redirects, middleware, ISR, proxy config.
+- Dynamic routes without `generateStaticParams()` plus `dynamicParams: false`.
+- `next/image` with the default loader (use `unoptimized: true` or a custom loader).
+- Any `NEXT_PUBLIC_*` containing a secret — these are inlined into the client bundle that ships in the installer.
+
+## React + Tauri Lifecycle Rules
+
+- Anything that touches `window`, `localStorage`, `@tauri-apps/api`, or `fetch` to the orchestrator goes in a Client Component AND inside `useEffect` (or an event handler). Calling `invoke()` at module top-level breaks the static build.
+- Wrap Tauri API access in a thin hook (`useTauri()`) that returns `null` until mounted, so SSR/SSG renders a stable shell.
+- Use `next/dynamic` with `ssr: false` for components that must not prerender (the live screenshot panel, the SSE chat stream).
+- Treat Server Components as build-time HTML generators. They may call public APIs at build time but they cannot reach the orchestrator (it does not exist during `next build`).
+
+## Data Fetching
+
+- Chat, action logs, settings reads, and SSE/WebSocket streams talk to the orchestrator at `http://127.0.0.1:<port>` with `Authorization: Bearer <sidecar-token>`. Port and token are supplied by Tauri via a startup event (`emit('orchestrator-ready', { port, token })`).
+- Public Supabase reads/writes use `@supabase/supabase-js` with the `sb_publishable_...` key plus the anonymous session JWT issued at first launch. Never import `sb_secret_...` here.
+- Use SWR or TanStack Query for cached reads, but disable retries on 401/403 — re-trigger the sidecar handshake instead.
+
+## UI Contract (from the PRD)
+
+Render exactly these chat message types as discriminated variants:
+
+- `user` — plain text from the human.
+- `assistant` — streamed Markdown.
+- `system_status` — short banner (e.g. "Pausing for 2FA", "Falling back to Gemini Flash").
+- `action_log` — structured card showing `{ action, target_ref, value (redacted), risk, reason, screenshot_url }`.
+- `approval_request` — high-risk action awaiting click-to-approve, with annotated screenshot.
+
+Drive these from the contracts package types (`@mayra/contracts`), not from hand-typed interfaces.
+
+## Build Target
+
+- Tauri uses WebView2 on Windows (Chromium-based, current). Set `browserslist` to `last 2 Chrome versions` to avoid shipping unnecessary polyfills.
+- Production CSS must work under Tauri's `asset://` and `tauri://` schemes. Avoid hard-coded `https://` font/image URLs unless explicitly added to `connect-src`/`img-src` in `tauri.conf.json`.
+
+## AI-Prone Mistakes To Reject
+
+- Adding `app/api/*` route handlers that mutate state — they will not run at runtime.
+- Using `useRouter().push()` to navigate to a non-statically-generated path.
+- Storing API keys in `NEXT_PUBLIC_*`.
+- Calling `window.__TAURI__` directly instead of `@tauri-apps/api`.
+- Putting `output: 'standalone'` or omitting `output` entirely — both break the Tauri build silently (Tauri serves `out/` as static).
+- Reading `process.env` of a non-`NEXT_PUBLIC_*` var on the client.
+
+Sources: https://nextjs.org/docs/app/guides/static-exports, https://v2.tauri.app/start/frontend/nextjs/, https://nextjs.org/docs/messages/export-image-api.

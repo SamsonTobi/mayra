@@ -1,0 +1,101 @@
+---
+description: Structured logging, redaction, evaluation metrics, and testing strategy for the agent loop
+globs: "apps/orchestrator/**,packages/contracts/**,apps/web/**,tests/**,**/test_*.py,**/*.test.ts"
+alwaysApply: false
+---
+
+# Observability & Testing Rules
+
+The thesis evaluation (PRD §11) lives or dies on the quality of logs and reproducible test runs. Observability is not "nice to have" — it is the deliverable.
+
+## Structured Logging
+
+- Python: **structlog** with `JSONRenderer` in production, `ConsoleRenderer` for dev. Bind a `correlation_id` (UUID v4) at the request/task boundary using `structlog.contextvars`.
+- TypeScript/Tauri: a thin wrapper that forwards to `tauri-plugin-log` and to the orchestrator's `/v1/logs/ui` endpoint for unified storage. Use the same JSON shape.
+- Every log record carries: `timestamp`, `level`, `correlation_id`, `task_id?`, `step?`, `event`, plus event-specific fields. `event` is a stable snake_case string like `step.started`, `action.validated`, `action.rejected`, `provider.fallback`, `user.approval_required`.
+
+## Mandatory Per-Step Fields (PRD evaluation metrics)
+
+For each agent step, emit one log record with:
+
+```json
+{
+  "event": "step.completed",
+  "correlation_id": "...",
+  "task_id": "...",
+  "step": 7,
+  "provider": "gemini",
+  "model": "gemini-2.5-flash",
+  "temperature": 0.1,
+  "observation_hash": "sha256:...",   // hash of (screenshot + a11y tree) for dedup
+  "intended_action": { ... },          // the action the model proposed (post-validation, post-redaction)
+  "executed_action": { ... } | null,   // null if rejected or pending approval
+  "result": "ok | rejected | approval_required | budget_exhausted | browser_error",
+  "latency_ms": { "model": 1234, "browser": 567, "total": 1900 },
+  "retries": 0,
+  "step_budget_remaining": 33
+}
+```
+
+These fields are the source for the thesis metrics: task success rate, visual grounding precision, end-to-end latency.
+
+## Redaction
+
+- A single `redact()` function runs on every log record and every Supabase write. Implement once, reuse everywhere.
+- Patterns (regex-based, applied to all string values recursively):
+  - API key shapes: `sk-[A-Za-z0-9]{20,}`, `sb_(publishable|secret)_[A-Za-z0-9]{20,}`, `xai-[A-Za-z0-9]{20,}`, generic `Bearer\s+[A-Za-z0-9._-]{20,}`.
+  - Cookie / Authorization / Set-Cookie header values.
+  - OTP-shaped strings adjacent to OTP context (`code`, `otp`, `verification`).
+- Field-level redaction (always, regardless of pattern match):
+  - `action.value` when the target ref's accessibility role is `textbox` and name matches password/otp patterns.
+  - Any field named `password`, `api_key`, `token`, `secret`, `authorization`.
+- Redacted values become `"[REDACTED]"` with a short suffix indicating cause: `"[REDACTED:password_field]"`. Never log the original for "debug context".
+
+## Tracing (Optional but Recommended)
+
+- Add OpenTelemetry instrumentation in the orchestrator with span names matching event names. Export to a local OTLP collector during development; disable in packaged builds unless the user opts in.
+- One span per step, child spans for model call, snapshot, screenshot, browser action. The thesis benchmark protocol can directly read latency percentiles from the trace data.
+
+## Crash Reporting
+
+- The orchestrator writes unhandled exceptions to a rolling local log (via `tauri-plugin-log`) with a stable schema. The UI exposes "Open log folder" in settings.
+- No automatic crash uploads to a third-party service for v1. The PRD scope is local-first and includes academic data; do not introduce a telemetry vendor without explicit consent UX.
+
+## Testing Strategy
+
+### Unit Tests (fast, run on every commit)
+
+- Pydantic schema fixtures: every fixture in `packages/contracts/fixtures` validates correctly (or fails as expected) in both Python (`pytest`) and TypeScript (`vitest`). One shared fixture set, two consumers.
+- `redact()` table-driven tests covering each redaction rule.
+- Risk classifier: a parameterized test with ≥ 30 cases, including the buttons-with-"delete"-text cases, the file-input case, the sensitive-domain case, the stale-snapshot case.
+- Action-to-`agent-browser`-command mapper: every action type, plus rejection cases for unknown actions.
+
+### Contract Tests (fast)
+
+- Spawn FastAPI in-process with `httpx.AsyncClient(app=app)`. Verify each endpoint's request/response shape against the `@mayra/contracts` types. Catch drift before it ships.
+
+### Integration Tests (slow, run nightly + pre-release)
+
+- Real `agent-browser` against local fixture pages (use the `agent-browser` test pages or a tiny static server in `tests/fixtures/sites/`). Models are stubbed via **respx** returning canned valid JSON action payloads.
+- One Playwright baseline script per benchmark task lives alongside the Mayra task spec — that's the PRD §11 "best-case DOM baseline". Run both in CI on the same fixture sites and compare metrics.
+
+### Benchmark Runner
+
+- Located in `apps/orchestrator/bench/`. Each benchmark task is a YAML spec: `{ name, seed_url, allowed_domains, goal, success_criteria }`. The runner executes 5 trials per task per model at temperature 0.0–0.2, writes results to Supabase `evaluations`.
+- `success_criteria` is a list of post-conditions evaluable from `agent-browser get text`/`get url` checks. Avoid LLM-judged success; the thesis needs deterministic evaluation.
+
+### Model Mocking
+
+- For deterministic tests, replace the model client with a `ScriptedModelClient` that returns pre-recorded `(chat_reply, action_payload)` pairs. Recordings are JSON files in `tests/fixtures/transcripts/`.
+- Re-record only by running the agent against a real provider with `MAYRA_RECORD=1`. Recording paths are explicit; nothing is recorded silently.
+
+## AI-Prone Mistakes To Reject
+
+- Calling `logger.info(f"got response: {response}")` with the raw provider response object — leaks keys, prompts, and PII into logs.
+- Using `print()` in the orchestrator. Goes nowhere in the packaged build.
+- Mocking `agent-browser` for integration tests. The whole point of those tests is to catch real CDP behavior.
+- Generating per-step latency by subtracting timestamps at the call sites — use a `time.perf_counter()` context manager wrapped around the model/browser calls in one place.
+- Skipping the `force row level security` step in tests against a local Supabase — tests will pass while production fails.
+- Letting the benchmark runner silently fall back to a different model on rate-limit — log a `provider.fallback` event and mark the trial as `degraded` for thesis honesty.
+
+Sources: https://www.structlog.org/en/stable/contextvars.html, https://opentelemetry.io/docs/instrumentation/python/, https://docs.pytest.org/en/stable/how-to/parametrize.html, https://supabase.com/docs/guides/local-development/testing.

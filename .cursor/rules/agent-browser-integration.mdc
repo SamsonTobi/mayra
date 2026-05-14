@@ -1,0 +1,85 @@
+---
+description: Rules for integrating vercel-labs/agent-browser as Mayra's perception/actuation layer
+globs: "apps/orchestrator/**/browser*,apps/orchestrator/**/adapter*,packages/contracts/**"
+alwaysApply: false
+---
+
+# Agent-Browser Integration Rules
+
+`agent-browser` is Mayra's perception (snapshot, screenshot) and actuation (click, type, navigate) layer. FastAPI owns it via a narrow adapter. The UI shows status, screenshots, and the live Chrome window; the UI never invokes `agent-browser` directly.
+
+## Installation & Pinning
+
+- Pin a specific `agent-browser` version. On Windows, install via `npm i -g agent-browser@<version>` during the desktop build, OR bundle the native Rust binary into `src-tauri/binaries/agent-browser-<target-triple>.exe` and treat it as a second sidecar.
+- Run `agent-browser install` once per machine to populate Chrome-for-Testing. Detect this on first launch and surface the install step in the onboarding flow if missing.
+- Use `agent-browser doctor --json` at orchestrator startup; gate task execution on a healthy doctor response.
+
+## Connection Modes (per PRD)
+
+- **Managed Chrome (default):** launch Chrome-for-Testing headed, isolated per task with `--session $task_id`.
+- **User Chrome via CDP:** `--auto-connect` (or `--cdp <port>`) after the user enables `--remote-debugging-port=9222`. The UI must show a one-time warning: "Remote debugging gives any local process full control over your browser. Close Chrome when done."
+- The choice is per-launch (PRD §5). Persist the user's last choice in Tauri secure-store-fronted settings, not in localStorage.
+
+## Session Isolation
+
+- One `--session <task_id>` per Mayra task. Sessions are ephemeral; do not reuse across tasks.
+- Persistent profiles (`--profile`) and session persistence (`--session-name`) are opt-in features behind a settings toggle. When enabled, set `AGENT_BROWSER_ENCRYPTION_KEY` to a 64-char hex value (stored in Tauri secure store, never on disk in plaintext).
+- Add `.agent-browser/` and any `*.state.json` files to `.gitignore`. State files contain session tokens equivalent to passwords.
+
+## Perception (Snapshot + Screenshot)
+
+- Always pair `snapshot -i --json` with `screenshot --annotate`. The numbered overlay labels in the screenshot match the `@e\d+` refs in the snapshot. Both are needed for visual-grounded model prompts.
+- Re-snapshot after every action that can change page state: any `click`, `fill`, `type`, `scroll`, `navigate`, `wait` that resolves due to a load event, or any external user input on the managed window.
+- Snapshot freshness lifetime is one action. Validating a ref against a stale snapshot is a contract bug.
+- Parse only `--json` output. Human-formatted CLI output is for `agent-browser chat` (diagnostics), not for the orchestrator.
+
+## Actions (Mapped From Validated Mayra Actions Only)
+
+- The adapter accepts only the Mayra `Action` model; it does not accept raw CLI strings. Mapping is one pure function (see safety-contracts rule).
+- Use refs by default; semantic locators (`find role`, `find text`, `find label`) are fallbacks when the snapshot doesn't yield a stable ref.
+- Never invoke from model output: `eval`, `keyboard inserttext`, `mouse move|down|up|wheel`, `set headers`, `set credentials`, `set geo`, `set offline`, `cookies *`, `storage *`, `network route|unroute|har`, `upload`, `pdf`, `addinitscript`, `removeinitscript`, `clipboard *`, `chat`.
+- `batch` is acceptable for deterministic sequences that don't need a model decision between steps (e.g. `open <url>` then `snapshot -i --json`). Never batch across a planning boundary.
+
+## Safety Knobs (always-on for Mayra tasks)
+
+Pass these on every `agent-browser` invocation:
+
+```bash
+agent-browser \
+  --session "$TASK_ID" \
+  --json \
+  --content-boundaries \
+  --max-output 20000 \
+  --allowed-domains "$TASK_DOMAINS" \
+  --action-policy ./policies/mayra-default.json \
+  --confirm-actions eval,download,upload \
+  --download-path "$TASK_DOWNLOAD_DIR"
+```
+
+- `--allowed-domains` is set per task from the benchmark spec, plus required CDN subdomains. Sub-resources and WebSocket/EventSource connections to non-allowed domains are blocked.
+- `--content-boundaries` wraps page output so the LLM cannot be tricked into following injected instructions ("ignore previous instructions") embedded in page text. Mayra's prompt template must treat content inside boundaries as untrusted data.
+- `--max-output` is 20 KB by default. Long pages are summarized by the orchestrator, not by raising the cap.
+- The static `./policies/mayra-default.json` denies destructive categories. Per-benchmark overrides extend it.
+
+## Streaming & Live Preview
+
+- `agent-browser stream enable --port <p>` exposes a runtime WebSocket of browser events. Use it to drive the UI's "watch the agent" panel without polling.
+- Stream WebSocket should bind to loopback. The orchestrator proxies relevant events to the UI; the UI does not connect to the agent-browser stream directly.
+
+## Process Lifecycle
+
+- The orchestrator spawns `agent-browser` as a child process (or uses the daemon mode if pinned). On task abort, send a graceful `agent-browser close --all` first, then SIGTERM/Kill after a 2s grace period.
+- The Tauri shell, on app exit, calls a `/v1/shutdown` endpoint that triggers `agent-browser close --all` before exiting. Otherwise orphan Chrome processes accumulate, especially on Windows.
+- Crash recovery: if `agent-browser` exits non-zero mid-task, mark the task `failed` with a `BrowserError`, do not auto-retry the whole task. Step-level retry is allowed up to the budget.
+
+## AI-Prone Mistakes To Reject
+
+- Parsing the human-formatted `agent-browser snapshot` output instead of `--json`.
+- Using `agent-browser chat` as the production orchestrator. The CLI chat is for diagnostics only.
+- Skipping `--allowed-domains` because "the task didn't specify any" — default to the seed domain only.
+- Using a persistent `--profile` for benchmark runs (contaminates the evaluation).
+- Forgetting to set `AGENT_BROWSER_ENCRYPTION_KEY` after enabling `--session-name`.
+- Calling `agent-browser eval` from any code path that touches model output, even for "harmless" reads — `eval` runs arbitrary JS and is denied by policy.
+- Hard-coding the Chrome remote-debugging port (always 9222) instead of letting the user pick or auto-detect.
+
+Sources: https://github.com/vercel-labs/agent-browser, https://github.com/vercel-labs/agent-browser/blob/main/README.md.

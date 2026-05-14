@@ -1,0 +1,80 @@
+---
+description: Supabase rules for Mayra — anonymous auth, RLS, key handling, schema discipline
+globs: "apps/orchestrator/**/supabase*,apps/web/**/supabase*,supabase/**,packages/contracts/**"
+alwaysApply: false
+---
+
+# Supabase Rules
+
+Supabase stores Mayra's session metadata, event logs, screenshots, and evaluation metrics. It is the only cloud surface for an otherwise local-first product. Treat it like a trust boundary, not a convenience.
+
+## Key Types & Where They Live
+
+- `sb_publishable_...` (new publishable key, replaces `anon`): used by the Tauri/Next.js UI and embedded in the bundle. Safe to ship — relies on RLS for protection.
+- `sb_secret_...` (new secret key, replaces `service_role`): used by FastAPI only, loaded from Tauri secure store at startup. Never embed in the UI, never log, never echo in errors. Read into a `SecretStr`.
+- Legacy `anon` and `service_role` JWTs are equivalent but Supabase recommends migrating to the new key format; use the new format from day one.
+
+## Identity Model (per PRD §4.5)
+
+- First-run: Tauri generates a device ID (UUID v4) and stores it in secure store. The UI calls `supabase.auth.signInAnonymously()` and links the device ID into `user_metadata.device_id` via `supabase.auth.updateUser({ data: { device_id } })`.
+- Subsequent launches reuse the anonymous session if the JWT is still valid; otherwise `signInAnonymously()` again and rebind the device ID.
+- The orchestrator receives the anonymous JWT from the UI on each request that needs user-scoped reads and passes it as the `Authorization` bearer when making `postgrest` calls — that way RLS evaluates correctly. Privileged writes use the secret key and explicitly set `user_id` to the authenticated user.
+
+## RLS — Mandatory, Default Deny
+
+- Every table has `alter table <t> enable row level security;` AND `alter table <t> force row level security;` (the second ensures even the table owner is subject to RLS during local Postgres operations).
+- Use **restrictive** policies in addition to permissive ones when you need AND semantics. Permissive-only policies OR together and are easy to over-grant.
+- Distinguish anonymous from permanent users:
+  ```sql
+  create policy "anon users only see their own rows"
+  on tasks as restrictive for select
+  to authenticated
+  using ( user_id = (select auth.uid()) );
+
+  create policy "anon users cannot delete tasks"
+  on tasks as restrictive for delete
+  to authenticated
+  using ( (select (auth.jwt()->>'is_anonymous')::boolean) is false );
+  ```
+- Wrap `auth.uid()` and `auth.jwt()` calls in `(select ...)` — Supabase docs explicitly recommend this for plan caching; saves significant query time at scale.
+- Index every `user_id` column referenced by an RLS policy. Without an index, RLS-filtered queries do full scans.
+
+## Schema Discipline
+
+- Migrations live in `supabase/migrations/` and are applied via the Supabase CLI. No ad-hoc SQL in the dashboard for non-prototyping work.
+- Tables: `sessions`, `tasks`, `steps`, `actions`, `screenshots` (metadata only — files in Storage), `evaluations`. Each has `id uuid primary key default gen_random_uuid()`, `user_id uuid references auth.users(id) on delete cascade`, `created_at timestamptz default now()`.
+- Append-only audit semantics for `steps` and `actions`: deny `update` and `delete` to `authenticated`; allow only `insert` and `select` via RLS. Corrections insert a new row referencing the prior.
+- Foreign keys with `on delete cascade` so removing a session removes its tasks/steps/actions in one operation (used by retention cleanup).
+
+## Storage (Screenshots)
+
+- Bucket `screenshots` is private. RLS-style policies on `storage.objects` restrict `select`/`insert` to the owning `user_id` (encoded in the object path: `screenshots/<user_id>/<task_id>/<step_id>.webp`).
+- Generate signed URLs from the orchestrator for the UI to render. Signed URL TTL: 5 minutes. Never make the bucket public.
+- Compress screenshots to WebP at quality 75 before upload. Original screenshots can be 2–5 MB each; with 25–40 steps per task across 5 trials × 10 tasks, that's gigabytes of evaluation data.
+
+## Anonymous-User Hygiene
+
+- Enable CAPTCHA / Cloudflare Turnstile on `signInAnonymously()` — Supabase rate-limits to 30/hr/IP by default but bad actors can still bloat the user table.
+- Run the retention job nightly (cron via Supabase Edge Function or pg_cron):
+  ```sql
+  delete from auth.users
+  where is_anonymous is true and created_at < now() - interval '30 days';
+  ```
+  This cascades through the foreign keys defined above. Combine with the PRD §13 retention notice: a desktop notification before the deletion window.
+
+## Data Retention (PRD §13)
+
+- Default window: 30 days. A nightly job deletes rows older than the window. The job runs server-side (pg_cron) so the user doesn't need to keep the app open.
+- Before deletion, a Supabase Realtime channel (or a Tauri-side cron-equivalent check) fires a desktop notification 24 h ahead so the user can export.
+
+## AI-Prone Mistakes To Reject
+
+- Calling Supabase with the secret key from the UI — never. The secret key lives only in the orchestrator process memory.
+- Writing RLS policies as `to public` instead of `to authenticated` — `public` matches both anon and authenticated roles and is rarely what you want.
+- Forgetting `force row level security` on the table — the owner bypasses RLS otherwise.
+- Using permissive policies for "deny everything except X" — use restrictive policies for hard denies.
+- Storing user-supplied form values (which may include passwords) in `actions.value` without redaction — see safety-contracts rule.
+- Logging the JWT or the secret key in error traces.
+- Embedding the legacy `service_role` JWT in `.env` files committed to the repo. If it's already there, rotate immediately and migrate to `sb_secret_...`.
+
+Sources: https://supabase.com/docs/guides/auth/auth-anonymous, https://supabase.com/docs/guides/database/postgres/row-level-security, https://supabase.com/docs/guides/storage/security/access-control, https://supabase.com/docs/guides/api/api-keys.

@@ -1,0 +1,71 @@
+---
+description: Mayra monorepo layout, package managers, and cross-runtime contract rules
+globs: "pnpm-workspace.yaml,turbo.json,package.json,uv.lock,pyproject.toml,Cargo.toml,packages/**,apps/**"
+alwaysApply: true
+---
+
+# Mayra Monorepo Architecture
+
+Mayra is a local-first desktop agent that combines three runtimes: Tauri/Rust (native shell), Next.js/TypeScript (UI, static export), and Python/FastAPI (orchestrator). The repo must treat each runtime with its own native toolchain rather than forcing one to look like another.
+
+## Canonical Layout
+
+```text
+apps/
+  desktop/       # Tauri v2 shell. Owns src-tauri/, capabilities, sidecar packaging, updater.
+  web/           # Next.js 15 static export. UI only. No runtime server.
+  orchestrator/  # FastAPI service. Owns model calls, action validation, browser adapter, persistence.
+packages/
+  contracts/     # Single source of truth for action/event JSON Schemas. Generates TS + Pydantic.
+  ui/            # Shared React primitives. Create only when a second consumer exists.
+  config/        # Shared eslint, tsconfig, prettier, turbo presets.
+scripts/         # Build helpers: rename sidecar binaries to target-triple, codegen, release tasks.
+docs/            # Thesis notes, architecture decisions, benchmark protocol.
+```
+
+Do not invent `frontend/`, `backend/`, `shared/`. Use scoped names: `@mayra/web`, `@mayra/desktop`, `@mayra/contracts`, `@mayra/config`.
+
+## Package Managers (per runtime, do not mix)
+
+- JS/TS: **pnpm** with `pnpm-workspace.yaml` and `workspace:*` for inter-package links. Commit `pnpm-lock.yaml`.
+- Python: **uv** with a `uv` workspace rooted at the repo. The orchestrator is a workspace member (`apps/orchestrator/pyproject.toml`). Commit `uv.lock`. Pin `requires-python = ">=3.12"` (matches asyncio TaskGroup + Pydantic v2 + modern type syntax).
+- Rust: cargo manages `apps/desktop/src-tauri`. Commit `Cargo.lock`. Pin the toolchain via `rust-toolchain.toml` so CI and devs use the same compiler.
+
+All three lockfiles live at the repo root or in their package; never gitignore them.
+
+## Turborepo Scope
+
+- Use Turborepo **only** for JS/TS tasks: `build`, `lint`, `typecheck`, `test`, `dev`. Configure `turbo.json` with explicit `inputs`, `outputs`, and `dependsOn` for caching.
+- Do **not** wrap Python/Rust in fake `package.json` files just to feed them to Turbo. Run `uv run` and `cargo`/`tauri` directly, optionally via root scripts like `pnpm py:test` -> `uv run --package orchestrator pytest`.
+- The Tauri `beforeBuildCommand` is the integration point: `pnpm --filter @mayra/web build && pnpm --filter @mayra/desktop sidecar:build`. Tauri then consumes `apps/web/out` as `frontendDist`.
+
+## Cross-Runtime Contracts
+
+- All action schemas, event payloads, and SSE message types live in `packages/contracts` as **JSON Schema** (Draft 2020-12) files.
+- Generate TypeScript types with `json-schema-to-typescript` and Python models with `datamodel-code-generator` into each consumer. Commit generated files so CI/IDE work without codegen.
+- Add a `pnpm contracts:check` task that re-runs codegen and fails if the diff is non-empty. Run it in CI to prevent drift.
+- Schema fixtures (one valid + one invalid per type) live in `packages/contracts/fixtures` and are loaded by both TS and Python tests.
+
+## Cross-Runtime Quality Gates
+
+- Root `.pre-commit-config.yaml` runs `ruff` + `mypy` on Python, `eslint` + `tsc --noEmit` on TS, `cargo fmt --check` + `cargo clippy -- -D warnings` on Rust, and `pnpm contracts:check`.
+- CI matrix: one job per runtime, plus an integration job that builds the Tauri bundle end-to-end (Windows is the primary target for development).
+- A single `pnpm verify` script at the root runs all three runtimes' typecheck + lint + test for local sanity.
+
+## Ownership Boundaries (do not blur)
+
+- Tauri/Rust: native shell only — window lifecycle, secure store, OS notifications, updater, sidecar lifecycle. **No business logic.**
+- Next.js: UI only — render state from the orchestrator, call Tauri commands for OS work, never call model providers or hold secrets.
+- FastAPI: all reasoning, all secret handling, all `agent-browser` invocation, all privileged Supabase writes, all action validation.
+- `packages/contracts`: shape only. No runtime code, no fetchers, no client wrappers.
+
+## AI-Prone Mistakes To Reject
+
+- Creating a `frontend/` or `backend/` directory at the repo root.
+- Adding a `package.json` inside `apps/orchestrator` purely to satisfy Turbo.
+- Hand-writing duplicate Pydantic and Zod action schemas — they will drift.
+- Skipping `Cargo.lock` or `uv.lock` from the commit.
+- Using npm or yarn alongside pnpm.
+- Putting Tauri command implementations that call HTTP or LLM APIs in Rust instead of going through the FastAPI sidecar.
+
+Sources: https://pnpm.io/workspaces, https://docs.astral.sh/uv/concepts/projects/workspaces/, https://turborepo.com/docs/crafting-your-repository/structuring-a-repository, https://v2.tauri.app/start/frontend/nextjs/.

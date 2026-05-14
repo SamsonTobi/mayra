@@ -1,0 +1,91 @@
+---
+description: Tauri v2 production rules for the Mayra desktop shell, sidecar, and Windows installer
+globs: "apps/desktop/**,**/src-tauri/**,**/tauri.conf.*,**/capabilities/**,**/*.wxs"
+alwaysApply: false
+---
+
+# Tauri v2 Production Rules
+
+Tauri is Mayra's native security boundary. It is not a generic Node-like backend. Treat every Rust command, every capability, and every plugin permission as a privilege grant.
+
+## Capabilities & Permissions (ACL)
+
+- All capability files live in `src-tauri/capabilities/*.json` with `$schema: "../gen/schemas/desktop-schema.json"`. Use TOML or JSON consistently.
+- Each capability MUST set `windows` and (when relevant) `platforms` to the smallest scope that works. Never use `"windows": ["*"]` unless the permission is genuinely global (e.g. `core:default`).
+- Split capabilities by surface: `main-window`, `sidecar`, `updater`, `notifications`, `secure-store`. Do not put every permission in one `default.json`.
+- Restrict Rust command exposure via `tauri_build::AppManifest::commands(&[...])` in `build.rs`. Default behavior exposes every registered command to every window — explicitly opt in instead.
+- Never grant `core:default` plus broad plugin defaults at once; pick the specific permissions you need. For example, prefer `core:window:allow-set-title` over `core:window:default`.
+- Forbidden by default: `fs:allow-*` scoped to `$HOME` or `$APPDATA` roots, `shell:allow-execute` with `name: ""` or unrestricted args, `opener:allow-open-url` with no URL allowlist.
+
+## CSP & Webview Hardening
+
+- Set `app.security.csp` in `tauri.conf.json` starting from `default-src 'self'; img-src 'self' data: asset: https://*.supabase.co; connect-src 'self' http://127.0.0.1:* https://*.supabase.co; style-src 'self' 'unsafe-inline'` and tighten from there.
+- Never add `unsafe-eval`. `unsafe-inline` for `style-src` is acceptable for Tailwind/CSS-in-JS only; document the reason inline.
+- Set `app.security.dangerousDisableAssetCspModification: false`. Do not use `dangerousUseHttpScheme`.
+- `app.windows[*].url` should be the bundled `index.html`. Disable `navigate` events that target external origins; route external URLs through `opener:allow-open-url` with an explicit allowlist or through the managed browser.
+
+## Sidecar (FastAPI Orchestrator)
+
+- Package the orchestrator as a single executable with PyInstaller (one-file or one-dir; one-dir is preferred for faster startup on Windows).
+- Place built binaries in `src-tauri/binaries/mayra-orchestrator-<target-triple><.exe>`. Get the triple from `rustc --print host-tuple`. Use a build script under `scripts/rename-sidecar.{js,ps1}` — do not rely on whichever binary the developer happened to build last.
+- Declare it in `tauri.conf.json`:
+  ```json
+  { "bundle": { "externalBin": ["binaries/mayra-orchestrator"] } }
+  ```
+- Grant sidecar execution only through a narrowly scoped permission in `src-tauri/capabilities/sidecar.json`:
+  ```json
+  {
+    "identifier": "shell:allow-execute",
+    "allow": [{ "name": "binaries/mayra-orchestrator", "sidecar": true,
+      "args": [{ "validator": "^--port=\\d{4,5}$" }, { "validator": "^--token=[A-Za-z0-9_-]{32,}$" }] }]
+  }
+  ```
+- The Tauri Rust side spawns the sidecar at app launch with: a random loopback port, a freshly generated single-use token, and the secure-store-fronted provider config. Pass the token via stdin or env, never via CLI arg in plaintext beyond the validator.
+- Tauri owns the sidecar lifecycle: spawn on launch, health-check `GET /healthz`, restart with exponential backoff on crash, terminate on app exit (`app.run_iteration` + `child.kill()` in `RunEvent::ExitRequested`).
+- Never let the UI spawn arbitrary commands. The shell plugin must only accept the registered sidecar.
+
+## Single Instance & Window State
+
+- Use `tauri-plugin-single-instance` so launching Mayra twice focuses the existing window instead of starting a second orchestrator and second browser daemon (would corrupt session state).
+- Use `tauri-plugin-window-state` to persist window position/size between sessions; users hate losing their layout.
+- Use `tauri-plugin-log` with file rotation in the OS app-data dir; ship logs at `info` and bump to `debug` via a settings toggle.
+
+## Secure Credential Storage
+
+- API keys (Gemini, Grok, Cloudflare Workers AI) live in `tauri-plugin-stronghold` or `tauri-plugin-keyring` (OS keychain / Windows Credential Manager). Never in `tauri-plugin-store` (plain JSON on disk).
+- Expose two narrow Rust commands: `save_provider_key(provider, key)` and `read_provider_key(provider)`. The `read` command is callable only by the sidecar's signed request (token-checked), not by the frontend.
+- The frontend never sees raw keys. Settings UI submits the key, then reads back only a masked status (`{ provider, configured: true, last4: "abcd" }`).
+
+## Updater
+
+- Use `tauri-plugin-updater`. Signatures are mandatory — they cannot be disabled.
+- Generate keys with `pnpm tauri signer generate -w ~/.tauri/mayra.key`. Commit only `pubkey` to `tauri.conf.json`. Store `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in CI secrets — `.env` files are not read by the signer.
+- Set `"createUpdaterArtifacts": true` (not `"v1Compatible"`) since this is a new project.
+- Windows install mode: `"installMode": "passive"` for unattended updates, or `"basicUi"` if user-visible confirmation is preferred.
+- Implement the Windows `on_before_exit` hook in `tauri_plugin_updater::UpdaterExt` to gracefully shut down the orchestrator and `agent-browser` before the installer relaunches.
+- Endpoints in `tauri.conf.json` must be HTTPS in production. `dangerousInsecureTransportProtocol: false`.
+
+## Windows Distribution (Primary Target)
+
+- Bundle as both MSI (WiX) and NSIS (`-setup.exe`) so corporate users and consumer users are both covered.
+- `webviewInstallMode`: use `"embedBootstrapper"` (≈1.8 MB) as the default — keeps the installer small while supporting offline-after-first-install. Switch to `"offlineInstaller"` only if benchmark users are confirmed to be offline at install time.
+- Set `"nsis": { "installMode": "currentUser" }` unless the thesis demo requires per-machine install. Per-user avoids UAC prompts and matches local-first design.
+- Sign the installer with an authenticode certificate when distributing externally; SmartScreen warnings will block adoption otherwise.
+
+## IPC Discipline
+
+- Use `tauri::command` only for OS-facing operations: window control, notifications, secure-store, sidecar token issuance, updater triggers.
+- Do not use Tauri commands as a proxy to the orchestrator HTTP API. The frontend calls FastAPI directly on `127.0.0.1:<port>` with the sidecar token in `Authorization: Bearer ...`.
+- Tauri events (`emit`/`listen`) are fine for short status pings from Rust to UI (sidecar started, update available). For high-frequency streams (token streaming, browser screenshots) use SSE/WebSocket from FastAPI directly — IPC payloads have serialization overhead and message size limits.
+
+## AI-Prone Mistakes To Reject
+
+- Putting LLM calls, JSON parsing, or browser orchestration inside Rust commands. That belongs in FastAPI.
+- Granting `fs:allow-read-text-file` with `$HOME/**` "for convenience".
+- Using `tauri-plugin-store` for API keys.
+- Calling `child.kill()` without first attempting a graceful `SIGTERM`/`/shutdown` HTTP request to flush logs.
+- Hard-coding the sidecar port (collision risk); pick a free port at launch and pass it both to the sidecar and the frontend via a Tauri event.
+- Binding the orchestrator to `0.0.0.0` — must be `127.0.0.1` always.
+- Skipping the updater public key in `tauri.conf.json` because "we're not shipping yet" — wire it up from day one so the first release is signable.
+
+Sources: https://v2.tauri.app/security/capabilities/, https://v2.tauri.app/security/permissions/, https://v2.tauri.app/develop/sidecar/, https://v2.tauri.app/plugin/updater/, https://v2.tauri.app/distribute/windows-installer/, https://v2.tauri.app/plugin/single-instance/.
