@@ -20,7 +20,7 @@ Several stages can be developed concurrently because they touch disjoint directo
 | **B — Browser adapter** | `apps/orchestrator/mayra_orchestrator/browser/**`; `apps/orchestrator/tests/{unit,integration}/test_browser_*.py` | **T7** | `lane/b-browser` | unstarted |
 | **C — Provider clients** | `apps/orchestrator/mayra_orchestrator/providers/{base.py,grok.py,cloudflare.py,factory.py,_retry.py}`; tests `apps/orchestrator/tests/unit/test_*_provider.py` | **T6** (everything except gemini list_models which is done) | `lane/c-providers` | unstarted |
 | **D — Persistence + Supabase** | `apps/orchestrator/mayra_orchestrator/persistence/**`; `supabase/**`; tests `apps/orchestrator/tests/unit/test_repo_*.py`, `tests/integration/test_supabase_*.py` | **T10** | `lane/d-supabase` | unstarted |
-| **E — Tauri desktop** | `apps/desktop/**`; `scripts/rename-sidecar.mjs` | **T8** (mostly) | `lane/e-desktop-t8-shell` | App shell: `main.rs`, plugins, IPC, `tauri.conf`, capabilities, `dist/` stub UI; `Cargo.lock` + sidecar env/backoff + bundled icons still open |
+| **E — Tauri desktop** | `apps/desktop/**`; `scripts/rename-sidecar.mjs` | **T8** | `main` | Shell: IPC, sidecar env + supervise + icons + rename-sidecar; commit `Cargo.lock` locally (`cargo generate-lockfile`) |
 | **F — Next.js UI** | `apps/web/**` (except files already in `src/lib/{orchestrator-client,sse}.*`); `packages/ui/**` if/when created | **T9** | `lane/f-web` | unstarted |
 | **G — Repo / CI / quality** | `.pre-commit-config.yaml`, `.github/workflows/**`, root `package.json` script additions, `turbo.json` task additions, `scripts/release-pipeline.mjs` | T0 leftovers, **T11 CI + packaging** | `lane/g-ci` | unstarted |
 | **H — Bench harness** | `bench/**`, `tests/fixtures/sites/**`, `apps/web/__bench-only__/**` if needed | **T11 bench** | `lane/h-bench` | unstarted |
@@ -245,10 +245,10 @@ Five paths must each have a failing contract test **before** the loop body is wr
 
 ## Stage T8 — Tauri shell (`apps/desktop`)   `[lane: E]`
 
-> Tauri app entry (`main.rs`), config, capabilities, and IPC commands are implemented; `Cargo.lock`, richer sidecar env, crash backoff, and release icons/bundle polish remain.
+> T8 desktop shell: env injection, crash backoff, teardown hooks, `scripts/rename-sidecar.mjs`, and bundle icons are implemented. Commit `Cargo.lock` with `cargo generate-lockfile` when Rust is available—CI/agents without `cargo` may skip.
 
 ### Project setup
-- [x] `apps/desktop/package.json` (`tauri`, `dev`, `build`, `sidecar:build` stub, tests)
+- [x] `apps/desktop/package.json` (`tauri`, `dev`, `build`, `sidecar:build` → `rename-sidecar.mjs`, tests)
 - [~] `apps/desktop/src-tauri/Cargo.toml`, `Cargo.lock` — commit `Cargo.lock` after `cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml` where Rust is installed (CI/agent hosts without `cargo` skip).
 - [x] `tauri.conf.json` per spec §2.1 (NSIS, embedBootstrapper, currentUser, updater inactive)
 - [x] CSP: `default-src 'self'`, `connect-src 'self' http://127.0.0.1:* https://*.supabase.co`, `img-src 'self' data: asset: https://*.supabase.co`
@@ -273,14 +273,14 @@ Five paths must each have a failing contract test **before** the loop body is wr
 
 ### Sidecar lifecycle (`sidecar.rs`, spec §2.4)
 - [x] Free-port allocator + 48-byte random token — `pick_unused_loopback_port`, `generate_sidecar_token` in `lib.rs`
-- [~] Spawn orchestrator with CLI args (`--port`, `--token`, `--data-dir`); provider/Supabase env injection still orchestrator packaging lane
+- [x] Spawn orchestrator with CLI args plus env `MAYRA_TAURI_ORIGIN`, optional `MAYRA_PROVIDER_KEYS_BASE64`, optional `MAYRA_SUPABASE_*` (keyring `supabase_*` attributes)
 - [x] Health-poll `/healthz` 200 ms × 50 → emit `orchestrator-ready { port, token }`
-- [ ] Backoff restart on crash (1, 2, 4, 8 s) → `orchestrator-failed`
-- [~] On app teardown (`RunEvent::Exit`): `stop_sidecar_inner` → `POST /v1/shutdown` → wait 2 s → `child.kill()` (spec text says `ExitRequested`; hook is `Exit` so shutdown runs once)
+- [x] Backoff restart on crash (1, 2, 4, 8 s), up to 4 attempts → emit `orchestrator-failed`
+- [x] On `RunEvent::ExitRequested` and `RunEvent::Exit`: `stop_sidecar_inner` → `POST /v1/shutdown` → wait 2 s → `child.kill()`
 
 ### Other plugins
 - [x] `tauri-plugin-single-instance` (focus existing window) (F1)
-- [~] Device id + provider keys via Rust `keyring` crate (no `tauri-plugin-store`; plugin wrapper optional)
+- [x] Device id + provider keys via Rust `keyring` crate (no `tauri-plugin-store`); Supabase secrets optional via same crate
 - [x] `tauri-plugin-log` — default targets include rotated `LogDir` (app log dir per OS)
 - [x] `tauri-plugin-notification` for OTP / retention warnings
 
@@ -366,7 +366,7 @@ Five paths must each have a failing contract test **before** the loop body is wr
 - [ ] At least 3 fixture sites in `tests/fixtures/sites/`
 
 ### Packaging
-- [ ] `scripts/rename-sidecar.mjs` — copies PyInstaller binary to `src-tauri/binaries/mayra-orchestrator-<triple>.exe`
+- [x] `scripts/rename-sidecar.mjs` — copies built orchestrator to `src-tauri/binaries/mayra-orchestrator-<triple>.exe` (or non-`.exe` on Unix)
 - [ ] `scripts/release-pipeline.mjs` — full chain (contracts codegen → next build → pyinstaller → tauri build)
 - [ ] PyInstaller spec: `--onedir --strip --paths apps/orchestrator --paths packages/contracts/python`
 - [ ] `pnpm tauri build` produces NSIS `-setup.exe`
@@ -450,7 +450,7 @@ apps/desktop/{package.json, tests/package-manifest.test.mjs,
              src-tauri/Cargo.toml, src-tauri/src/lib.rs}
 ```
 
-Partial **T8 desktop:** crash backoff, sidecar env injection, `Cargo.lock`, and NSIS bundle icons are still open; core shell (`main.rs`, IPC, plugins, `tauri.conf`, capabilities) is in flight on `lane/e-desktop-t8-shell`. Not started: `supabase/`, `bench/`, `scripts/` packaging, `agent-browser` adapter, full agent loop, real provider streaming, structlog wiring, Next.js pages beyond `src/lib`, CI workflows.
+T8 desktop shell is complete (`Lane E`): IPC, sidecar env + backoff supervise, bundle icons, `scripts/rename-sidecar.mjs`; remaining packaging polish is **T11** (`pnpm tauri build` CI, PyInstaller chain). Still open elsewhere: `supabase/`, `bench/`, `agent-browser` adapter wiring in orchestrator, full agent loop, Next.js beyond `src/lib`, CI workflows.
 
 ---
 
