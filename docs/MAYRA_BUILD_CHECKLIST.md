@@ -21,7 +21,7 @@ Several stages can be developed concurrently because they touch disjoint directo
 | **C — Provider clients** | `apps/orchestrator/mayra_orchestrator/providers/{base.py,grok.py,cloudflare.py,factory.py,_retry.py}`; tests `apps/orchestrator/tests/unit/test_*_provider.py` | **T6** (everything except gemini list_models which is done) | `lane/c-providers` | unstarted |
 | **D — Persistence + Supabase** | `apps/orchestrator/mayra_orchestrator/persistence/**`; `supabase/**`; tests `apps/orchestrator/tests/unit/test_repo_*.py`, `tests/integration/test_supabase_*.py` | **T10** | `lane/d-supabase` | unstarted |
 | **E — Tauri desktop** | `apps/desktop/**` (does not exist yet); `scripts/rename-sidecar.mjs` | **T8** | `lane/e-desktop` | unstarted |
-| **F — Next.js UI** | `apps/web/**` (except files already in `src/lib/{orchestrator-client,sse}.*`); `packages/ui/**` if/when created | **T9** | `lane/f-web` | unstarted |
+| **F — Next.js UI** | `apps/web/**` (except files already in `src/lib/{orchestrator-client,sse}.*`); `packages/ui/**` if/when created | **T9** | `lane/f-web` | in progress |
 | **G — Repo / CI / quality** | `.pre-commit-config.yaml`, `.github/workflows/**`, root `package.json` script additions, `turbo.json` task additions, `scripts/release-pipeline.mjs` | T0 leftovers, **T11 CI + packaging** | `lane/g-ci` | unstarted |
 | **H — Bench harness** | `bench/**`, `tests/fixtures/sites/**`, `apps/web/__bench-only__/**` if needed | **T11 bench** | `lane/h-bench` | unstarted |
 
@@ -297,13 +297,13 @@ Five paths must each have a failing contract test **before** the loop body is wr
 ### Done
 - [x] `lib/orchestrator-client.ts` (`createTask`, `abort`, `postTaskMessage`)
 - [x] `lib/sse.ts` (`parseSseText`)
-- [x] Vitest tests for both (5 tests green)
+- [x] Vitest tests for both (6 tests green incl. `next-config`)
 
 ### Project setup
-- [ ] `apps/web/next.config.ts` per spec §3.1 (`output:'export'`, `images.unoptimized:true`, `trailingSlash:true`)
+- [x] `apps/web/next.config.ts` per spec §3.1 (`output:'export'`, `images.unoptimized:true`, `trailingSlash:true`)
 - [ ] `apps/web/tsconfig.json` extends `@mayra/config/tsconfig.base.json`
 - [ ] Tailwind or vanilla CSS (pick one — minimal, no design system)
-- [ ] Install React 19 + Next 15 deps (currently web/package.json only has vitest+ts)
+- [x] Install React 19 + Next 15 deps (currently web/package.json only has vitest+ts)
 - [ ] `app/layout.tsx`, `app/page.tsx` (root)
 
 ### Routes (F1–F20)
@@ -407,7 +407,7 @@ Five paths must each have a failing contract test **before** the loop body is wr
 - [x] §B.1 — 12 first-failing pure tests green (35 unit + 4 contracts)
 - [x] §B.2 — 11 contract tests green (httpx ASGITransport)
 - [~] §B.3 — 4 integration files exist, all `pytest.skip` until stage T7 lands
-- [~] §B.4 — 3 web tests green (orchestrator-client × 3, sse × 2); 5 RTL tests still pending
+- [~] §B.4 — 6 web tests green (orchestrator-client × 3, sse × 2, next-config × 1); 5 RTL tests still pending
 - [ ] §B.5 — 4 Rust tests
 - [ ] §B.6 — coverage gates wired (Python ≥ 85 % branch, TS ≥ 80 %, Rust ≥ 70 %)
 
@@ -422,8 +422,8 @@ Five paths must each have a failing contract test **before** the loop body is wr
 | Python contract (`tests/contract`) | 11 | ✅ green |
 | Python integration (skipped) | 4 | ⏸ awaiting T7 |
 | TS contracts vitest (action schema) | 4 | ✅ green |
-| TS web vitest (`apps/web`) | 5 | ✅ green |
-| **Total green** | **59** | |
+| TS web vitest (`apps/web`) | 6 | ✅ green |
+| **Total green** | **60** | |
 
 Modules implemented:
 
