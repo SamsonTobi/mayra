@@ -15,6 +15,9 @@ class CreateTaskRequest(StrictModel):
     allowed_domains: list[str]
     session_id: str | None = None
     start_blocked_sleeper: bool = False
+    start_agent_loop: bool = False
+    max_steps: int = Field(default=40, ge=1, le=256)
+    exhaust_budget_probe: bool = False
 
 
 class CreateTaskResponse(StrictModel):
