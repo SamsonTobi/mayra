@@ -65,7 +65,7 @@ async def test_abort_cancels_in_flight_task_and_returns_aborted(client, app, app
     r2 = await client.post(f"/v1/tasks/{tid}/abort", headers=auth_headers(app_settings.token))
     assert r2.status_code == 200
     assert r2.json() == {"status": "aborted"}
-    runner = app.state.registry.tasks[tid].runner
+    runner = app.state.registry.tasks[tid].blocked_runner
     assert runner is not None
     assert runner.cancelled()
 
@@ -97,9 +97,10 @@ async def test_approve_releases_loop_event(client, app, app_settings):
     tid = r.json()["task_id"]
     ev = app.state.registry.tasks[tid].approval_event
     assert not ev.is_set()
+    aid = app.state.approval_registry.register(tid)
     await client.post(
         "/v1/actions/approve",
-        json={"approval_id": tid, "decision": "approve"},
+        json={"approval_id": aid, "decision": "approve"},
         headers=auth_headers(app_settings.token),
     )
     assert ev.is_set()
@@ -161,6 +162,32 @@ async def test_stream_emits_token_then_action_then_done(client, app_settings):
     payload = json.loads(done_data)
     assert payload["task_id"] == tid
     assert payload["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_unknown_approval_returns_404(client, app_settings):
+    r = await client.post(
+        "/v1/actions/approve",
+        json={"approval_id": "00000000-0000-0000-0000-000000000000", "decision": "approve"},
+        headers=auth_headers(app_settings.token),
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_task_message_owner_mismatch_returns_403(client, app_settings):
+    r0 = await client.post(
+        "/v1/tasks",
+        json={"goal": "x", "allowed_domains": ["example.com"]},
+        headers=auth_headers(app_settings.token, owner_id="alice"),
+    )
+    tid = r0.json()["task_id"]
+    r1 = await client.post(
+        f"/v1/tasks/{tid}/message",
+        json={"text": "nope"},
+        headers=auth_headers(app_settings.token, owner_id="bob"),
+    )
+    assert r1.status_code == 403
 
 
 @pytest.mark.asyncio
