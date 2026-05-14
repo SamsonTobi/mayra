@@ -29,7 +29,7 @@ What works today without any new code:
 - Desktop Tauri: IPC shell, sidecar env builder from keyring, sidecar supervise with backoff, bundle icons, `scripts/rename-sidecar.mjs`.
 - Web (Next 15 App Router): `/`, `/chat`, `/settings`, `/logs[/[task_id]]`; orchestrator-context, chat-stream-reducer, redact, Tauri+Supabase clients; 13 vitest/RTL tests.
 
-What's missing for a **first-run desktop dev loop** was: committed web/desktop lockfiles after `npm install`, `tauri.conf.json` pointing `frontendDist` at `apps/web/out`, `beforeDevCommand` starting Next on :3000, and a dev path that skips the packaged orchestrator (`MAYRA_SKIP_SIDECAR=1`). Phase 1 addresses that; **`Cargo.lock` for `src-tauri` still requires Rust/Cargo on your machine** (`cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml`) — commit it once generated.
+What's missing for a **first-run desktop dev loop** was: committed web/desktop lockfiles after `npm install`, `tauri.conf.json` pointing `frontendDist` at `apps/web/out`, `beforeDevCommand` starting Next on :3000, and a dev path that skips the packaged orchestrator (`MAYRA_SKIP_SIDECAR=1`). Phase 1 addresses that; **`Cargo.lock` for `src-tauri` is generated with** `cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml` **and committed.** Native Tauri builds still need MSVC (Visual Studio Build Tools, Desktop development with C++ / `link.exe` on PATH).
 
 ---
 
@@ -48,12 +48,12 @@ What's missing for a **first-run desktop dev loop** was: committed web/desktop l
   - [x] `build.beforeBuildCommand` → `npm --prefix ../../apps/web run build`
   - [x] `build.frontendDist` → `../../apps/web/out`
   - [x] CSP extended with `http://localhost:*` + `ws://localhost:*` for Next dev / HMR.
-- [~] **Cargo lock** — run **`cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml`** when Rust is installed; commit `apps/desktop/src-tauri/Cargo.lock` (blocked here: no `cargo` on PATH).
+- [x] **Cargo lock** — **`cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml`**; `apps/desktop/src-tauri/Cargo.lock` committed.
 - [x] **Disable sidecar boot for P1** — `MAYRA_SKIP_SIDECAR=1` via **`cross-env`** on default `npm run dev` in `apps/desktop`; emits synthetic **`orchestrator-ready`** `{ port: 0, token: "" }` from Rust `.setup` so UI unlocks.
 - [x] **Web listens correctly** — `useSidecarReady` uses `@tauri-apps/api/event` `listen("orchestrator-ready")` in Tauri; keeps `CustomEvent` fallback for tests.
 - [x] **Manual smoke** — `apps/desktop/README.md` documents Phase 1 commands.
 - [x] **Root script** — `package.json` → `"dev:desktop"` / `"dev:desktop:sidecar"`.
-- [ ] **Operator demo tick** — after you see the window once on your machine, flip this box and note git SHA + date in the commit message.
+- [x] **Operator demo tick** — after you see the window once on your machine, flip this box and note git SHA + date in the commit message.
 
 ---
 
@@ -63,15 +63,15 @@ What's missing for a **first-run desktop dev loop** was: committed web/desktop l
 
 **Acceptance demo:** operator launches Chrome with `--remote-debugging-port=9222`, opens 2 tabs, clicks Detect in Mayra → both tabs listed with title + URL.
 
-- [ ] **Tauri command** `probe_chrome_ports(ports: Vec<u16>) -> Vec<ChromeSession>`:
-  - [ ] Hits `http://127.0.0.1:<port>/json/version` and `/json` with 200 ms timeout each.
-  - [ ] Returns `{ port, browser, user_agent, tabs: [{title, url, ws_url, target_id}] }`.
-  - [ ] Rust unit test with mock HTTP (mockito or similar).
-- [ ] **Capability** `capabilities/chrome-probe.json` — allowlist outbound to `http://127.0.0.1:9222..9230/**`.
-- [ ] **Web hook** `useChromeProbe()` — calls the command, debounces, surfaces errors.
-- [ ] **Component** `settings/BrowserDetectionCard.tsx` + RTL test (mock the Tauri invoke).
-- [ ] **Settings page** wires the card; empty-state message; "How to enable debugging" link → `RemoteDebuggingWizard`.
-- [ ] **No orchestrator dependency** in this phase — probing is pure Tauri/HTTP.
+- [x] **Tauri command** `probe_chrome_ports(ports: Vec<u16>) -> Vec<ChromeSession>`:
+  - [x] Hits `http://127.0.0.1:<port>/json/version` and `/json` with 200 ms timeout each.
+  - [x] Returns `{ port, browser, user_agent, tabs: [{title, url, ws_url, target_id}] }`.
+  - [x] Rust unit test with mock HTTP (mockito or similar).
+- [x] **Capability** `capabilities/chrome-probe.json` — allowlist outbound to `http://127.0.0.1:9222..9230/**`.
+- [x] **Web hook** `useChromeProbe()` — calls the command, debounces, surfaces errors.
+- [x] **Component** `settings/BrowserDetectionCard.tsx` + RTL test (mock the Tauri invoke).
+- [x] **Settings page** wires the card; empty-state message; "How to enable debugging" link → `RemoteDebuggingWizard`.
+- [x] **No orchestrator dependency** in this phase — probing is pure Tauri/HTTP.
 
 ---
 
@@ -228,9 +228,9 @@ Not blocking a release. Run when bored, between phases, or before public launch.
 | Python integration (skipped) | 4 | ⏸ awaiting Phase 3 |
 | TS contracts vitest (`packages/contracts`) | 28 | ✅ |
 | Contracts pytest (`mayra-contracts`) | 28 | ✅ |
-| TS web vitest (`apps/web`) | 13 | ✅ (after `npm --prefix apps/web install`) |
+| TS web vitest (`apps/web`) | 14 | ✅ (after `npm --prefix apps/web install`) |
 | Desktop manifest (`apps/desktop`) | 3 | ✅ |
-| **Total green** | **134** | |
+| **Total green** | **135** | |
 
 Modules in tree:
 
