@@ -13,6 +13,16 @@ def get_settings(request: Request) -> AppSettings:
     return request.app.state.settings
 
 
+def get_effective_owner_id(
+    _request: Request,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    x_mayra_owner_id: Annotated[str | None, Header(alias="X-Mayra-Owner-Id")] = None,
+) -> str:
+    if x_mayra_owner_id is not None and x_mayra_owner_id.strip():
+        return x_mayra_owner_id.strip()
+    return settings.default_owner_id
+
+
 def require_bearer(
     request: Request,
     authorization: Annotated[str | None, Header()] = None,

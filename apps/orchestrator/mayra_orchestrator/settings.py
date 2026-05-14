@@ -10,3 +10,4 @@ class AppSettings(BaseSettings):
 
     token: str = Field(default="dev-token-change-me")
     include_contract_routes: bool = False
+    default_owner_id: str = Field(default="local")
