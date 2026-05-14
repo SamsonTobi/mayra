@@ -1,491 +1,292 @@
-# Mayra — Build Checklist (single-source todo)
+# Mayra — Build Checklist (vertical-slice phases)
 
-Derived from `MAYRA_PRD.md`, `MAYRA_TECHNICAL_SPEC.md` (incl. §A v1 cuts, §B TDD, §C local screenshots), and `MAYRA_DESKTOP_UX_FLOWS.md`. Order = §B.7 stages T0→T11. Pick the next unchecked item, do red→green→refactor (§B.9), check it off, move on.
+Derived from `MAYRA_PRD.md`, `MAYRA_TECHNICAL_SPEC.md` (§A v1 cuts, §B TDD, §C local screenshots), and `MAYRA_DESKTOP_UX_FLOWS.md`.
 
 Legend: `[x]` done · `[~]` partial / stubbed · `[ ]` todo · `(spec §X)` cross-ref · `(F#)` UX flow.
 
-> Rule: every implementation item is **preceded** by a failing test commit. If the test isn't possible (e.g. CSS-only) write a smoke test or skip the row.
+---
 
-> **Checklist hygiene:** When you finish rows below, update this file in the same change-set (flip boxes, use `[~]` when intentionally stubbed). Prefer **small commits** (see `.cursor/rules/mayra-small-commits.mdc`).
+## New approach — vertical slices
+
+We are **no longer** building horizontally (finish all of orchestrator → all of browser → all of UI). Each **Phase** below ships a runnable desktop binary with one more user-visible capability. Every phase must end with the app actually launching and the **acceptance demo** working on the operator's machine before the next phase starts.
+
+Within a phase, you can still split work across files (lanes), but the phase doesn't close until its acceptance demo is reproduced.
+
+> Rule: every implementation item is **preceded** by a failing test commit. Prefer **small commits** (see `.cursor/rules/mayra-small-commits.mdc`).
+> Hygiene: when you finish rows, flip `[ ]` → `[x]` / `[~]` in the **same** change-set.
 
 ---
 
-## Parallel lanes (multi-agent execution)
+## Phase 0 — Baseline (already on `main`)
 
-Several stages can be developed concurrently because they touch disjoint directories. Each lane runs on its own branch (`lane/<id>-<slug>`), rebases onto `main`, opens a PR per stage, and merges fast-forward when green.
+What works today without any new code:
 
-| Lane | Owner scope (files this lane is allowed to touch) | Stages | Branch | Status |
-|------|---------------------------------------------------|--------|--------|--------|
-| **A — Orchestrator core** | `apps/orchestrator/mayra_orchestrator/{agent_loop.py,logging_setup.py,api/approval_registry.py,api/routes/**}`; tests under `apps/orchestrator/tests/{unit,contract}/` | T3 (logging), T4 follow-ups, **T5 agent loop** | `lane/a-loop` | unstarted |
-| **B — Browser adapter** | `apps/orchestrator/mayra_orchestrator/browser/**`; `apps/orchestrator/tests/{unit,integration}/test_browser_*.py` | **T7** | `lane/b-browser` | unstarted |
-| **C — Provider clients** | `apps/orchestrator/mayra_orchestrator/providers/{base.py,grok.py,cloudflare.py,factory.py,_retry.py}`; tests `apps/orchestrator/tests/unit/test_*_provider.py` | **T6** (everything except gemini list_models which is done) | `lane/c-providers` | unstarted |
-| **D — Persistence + Supabase** | `apps/orchestrator/mayra_orchestrator/persistence/**`; `supabase/**`; tests `apps/orchestrator/tests/unit/test_repo_*.py`, `tests/integration/test_supabase_*.py` | **T10** | `lane/d-supabase` | unstarted |
-| **E — Tauri desktop** | `apps/desktop/**`; `scripts/rename-sidecar.mjs` | **T8** | merged into `main` | Shell: IPC, sidecar env + supervise + icons + rename-sidecar; commit `Cargo.lock` locally (`cargo generate-lockfile`) |
-| **F — Next.js UI** | `apps/web/**` (except files already in `src/lib/{orchestrator-client,sse}.*`); `packages/ui/**` if/when created | **T9** | merged into `main` | App Router routes, hooks, RTL tests, supabase bootstrap done |
-| **G — Repo / CI / quality** | `.pre-commit-config.yaml`, `.github/workflows/**`, root `package.json` script additions, `turbo.json` task additions, `scripts/release-pipeline.mjs` | T0 leftovers, **T11 CI + packaging** | `lane/g-ci` | unstarted |
-| **H — Bench harness** | `bench/**`, `tests/fixtures/sites/**`, `apps/web/__bench-only__/**` if needed | **T11 bench** | `lane/h-bench` | unstarted |
+- `npm --prefix packages/contracts run test` — 28 schema fixtures pass.
+- `uv run --package mayra-contracts pytest` — 28 Pydantic parity tests pass.
+- `uv run --extra dev --directory apps/orchestrator pytest -m "not integration"` — 57 orchestrator tests pass (unit + contract + agent-loop contract + ownership).
+- `npm --prefix apps/desktop run test` — 3 desktop manifest tests pass.
+- Orchestrator FastAPI: `/healthz`, tasks CRUD/abort/approve, validate, ui-logs, SSE chat-stream (stubbed loop wired to a real per-task queue), ApprovalRegistry, owner gating, agent_loop module.
+- Desktop Tauri: IPC shell, sidecar env builder from keyring, sidecar supervise with backoff, bundle icons, `scripts/rename-sidecar.mjs`.
+- Web (Next 15 App Router): `/`, `/chat`, `/settings`, `/logs[/[task_id]]`; orchestrator-context, chat-stream-reducer, redact, Tauri+Supabase clients; 13 vitest/RTL tests.
 
-### Shared files (require coordination)
-
-These files are touched by multiple lanes; a lane MUST limit its diff to a small, additive seam, post the diff in PR description, and rebase before merge:
-
-| File | Touched by | Required pattern |
-|------|------------|------------------|
-| `apps/orchestrator/mayra_orchestrator/api/app.py` | A, B, C, D | Each lane defines `def wire(app: FastAPI) -> None` in its own module and `create_app()` calls them in fixed order. No lane edits route logic of another lane. |
-| `apps/orchestrator/mayra_orchestrator/settings.py` | A, B, C, D, G | Append-only fields, default values; never reorder/rename existing fields. |
-| `apps/orchestrator/pyproject.toml` | A, B, C, D, H | Append to `dependencies`; never remove. Bump `[project.optional-dependencies].dev` only if your tests need it. |
-| `packages/contracts/**` | A, F (consumers) | Schema changes are their own PR; consumers wait for it to merge then `npm run contracts:codegen`. |
-| `docs/MAYRA_BUILD_CHECKLIST.md` | every lane | Each PR flips only the rows that lane finished. Resolve merge conflicts by accepting the union of `[x]` marks. |
-| `uv.lock`, `pnpm-lock.yaml`, `package-lock.json` | every lane | Always commit; on conflict, regenerate then commit. Never hand-edit. |
-
-### Coordination rules
-
-1. **One lane per chat / agent.** Don’t mix lanes in a single working tree.
-2. **Branch off latest `main`.** `git fetch && git switch -c lane/<id>-<slug> origin/main`.
-3. **Tests first.** Every PR includes the failing test commit before the implementation commit (per `.cursor/rules/mayra-small-commits.mdc`).
-4. **Stay inside your scope.** If you need a file outside your scope, open a tiny PR from another lane (or ask the operator) instead of editing it yourself.
-5. **No `git push --force` to `main`.** Lane branches: rebase + force-push to your own branch is fine.
-6. **CI lane (G) goes last per stage.** It’s the only lane that may aggregate cross-lane wiring (e.g. `verify` script picking up new package scripts).
-7. **Lockfile churn**: if `uv sync` or `npm install` adds/removes a package, regenerate the lockfile in the same commit as the dep change.
-8. **Conflict on `app.py`**: never both register the same route prefix. Reserve prefixes: A = `/v1/tasks`, `/v1/chat`, `/v1/actions`, `/v1/sessions`; B = (none — adapter only); C = `/v1/settings`, `/v1/providers`; D = `/v1/logs`.
-
-### Dependency graph
-
-- **A** can start now. Independent of others except contracts (already done).
-- **B** can start now. A’s agent loop will call into B at the end (interface: `BrowserAdapter` Protocol). Until then B exposes `FakeBrowser`-compatible Protocol.
-- **C** can start now. Independent.
-- **D** can start now (table DDL + repos). Wiring into agent loop blocks on A; tests can use direct repo calls.
-- **E** — Desktop: run `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` when Rust is installed; commit `Cargo.lock` via `cargo generate-lockfile`. Sidecar packaging (`mayra-orchestrator`) still lands in lane G; backoff/env wiring optional follow-ups.
-- **F** can start now. UI mocks the orchestrator over fetch/EventSource; no runtime dependency on A.
-- **G** depends on at least one other lane having scripts/tests to wire. CI matrix can scaffold immediately.
-- **H** independent; eval expectations rely on at least one fixture site.
+What's missing to actually run the desktop today: `npm --prefix apps/web install` (Lane F deps), `pnpm install` at root (`pnpm-workspace.yaml`), an integrated sidecar binary or dev script, `tauri.conf.json` `devUrl/frontendDist` pointing at the web build, and one provider key. Phase 1 fixes all of that.
 
 ---
 
-## Stage T0 — Repo scaffolding   `[lane: G]`
+## Phase 1 — "Hello desktop" (boot a window)
 
-- [x] Root `package.json` with workspace test scripts (npm-based, pnpm optional)
-- [x] `pnpm-workspace.yaml`
-- [x] `apps/orchestrator/pyproject.toml` (uv-buildable, hatchling)
-- [x] `packages/contracts/{package.json,tsconfig.json,vitest.config.ts}`
-- [x] `apps/web/{package.json,tsconfig.json,vitest.config.ts}`
-- [x] **Root `pyproject.toml`** as uv workspace root (`[tool.uv.workspace] members = [...]`) (spec §0.3)
-- [x] **`uv.lock`** committed at repo root after `uv sync` (single workspace lock; drop nested `apps/orchestrator/uv.lock`)
-- [x] **`turbo.json`** for JS/TS pipelines (build/lint/typecheck/test) (spec §0.3)
-- [x] **`rust-toolchain.toml`** pinning stable + rustfmt/clippy (spec §0.1)
-- [x] **`.gitignore`** per spec §0.3 (`.venv/`, `target/`, `binaries/*`, `.agent-browser/`, `*.state.json`, `.env`, `.next/`, `out/`, `dist/`)
-- [x] **`.editorconfig`** (LF, 2-space JS, 4-space Python, trim trailing ws)
-- [ ] **`.pre-commit-config.yaml`** with ruff, pyright, eslint, cargo fmt, cargo clippy, contracts-check (spec §0.3)
-- [~] **Root `verify` script** — `npm run verify` runs `contracts:check` + full `npm test` (contracts vitest + contracts pytest + orchestrator + web). Extend with turbo lint/typecheck + `ruff`/`cargo` gates when those scripts land.
+**Goal:** double-click `pnpm tauri dev` → window opens, Next.js layout renders, no panics, no sidecar required yet.
 
----
+**Acceptance demo:** operator runs `pnpm tauri dev` in `apps/desktop`, the Mayra window appears with the welcome/onboarding page rendered.
 
-## Stage T1 — `@mayra/contracts` (single source of truth)   `[lane: shared — frozen unless schema change requested]`
-
-### Schemas
-- [x] `schemas/action.schema.json` (Draft 2020-12, additionalProperties:false; conditional rules for click/type/navigate)
-- [x] `schemas/message.schema.json` — discriminated union over `kind` (user|assistant|system_status|action_log|approval_request) (spec §1.2); cross-refs use relative `./action.schema.json`
-- [x] `schemas/events.schema.json` — SSE payload union (token|action|status|approval|done|error); refs `./message.schema.json#/$defs/…`
-- [x] `schemas/approval.schema.json`
-- [x] `schemas/settings.schema.json`
-
-### Fixtures
-- [x] `action.valid.click.json`
-- [x] `action.invalid.css_selector.json`
-- [x] `action.invalid.extra_field.json`
-- [x] `action.invalid.missing_risk.json`
-- [x] Extra valid action fixtures: `type` / `scroll` / `wait` / `navigate` (one each)
-- [x] Extra invalid action fixtures: value > 2048, navigate non-URI, `action:"eval"`
-- [x] One valid + one invalid fixture **per other schema** (message/events/approval/settings)
-
-### Codegen
-- [~] `packages/contracts/scripts/codegen.mjs` → emits **`src/generated.ts`** (bundle + `json-schema-to-typescript`; inline stubs for `$defs` names); **Python** models are **`mayra_contracts/models.py`** (hand-maintained next to schemas, same fixtures — optional future datamodel-codegen)
-- [x] Commit generated TS + Python package sources (`generated.ts`, `mayra_contracts/`)
-- [x] `packages/contracts/python/pyproject.toml` (uv member, name `mayra-contracts`)
-- [x] `scripts/contracts-check.mjs` — re-runs codegen, fails on diff for `packages/contracts/src/generated.ts`
-- [x] Wire `npm run contracts:check` into `verify` (via root `package.json`)
-
-### Tests
-- [x] vitest fixture validation for `action.schema.json` (superseded by full-schema loop)
-- [x] vitest fixture loop for **all** schemas (`test/schema.test.ts`)
-- [x] pytest mirror — `mayra_contracts.models` accept/reject same fixtures (`packages/contracts/python/tests/test_fixture_parity.py`)
-
-### Cross-cutting (replace hand-written models)
-- [x] Replace `mayra_orchestrator/actions/schema.py` with re-export from `mayra_contracts`
-- [x] Add `mayra-contracts` as a workspace dep in `apps/orchestrator/pyproject.toml`
+- [ ] **Web install** — `npm --prefix apps/web install` (run once, commit any lockfile churn).
+- [ ] **Root install** — `pnpm install` so `@mayra/config`, `@mayra/contracts`, `@mayra/web`, `@mayra/desktop` link as workspace packages.
+- [ ] **Web boots standalone** — `npm --prefix apps/web run dev` serves `http://localhost:3000`, `/` renders OnboardingFlow without runtime errors (mock sidecar OK).
+- [ ] **Tauri config wiring** — `apps/desktop/src-tauri/tauri.conf.json`:
+  - [ ] `build.beforeDevCommand = "pnpm --filter @mayra/web dev"`
+  - [ ] `build.devUrl = "http://localhost:3000"`
+  - [ ] `build.beforeBuildCommand = "pnpm --filter @mayra/web build"`
+  - [ ] `build.frontendDist = "../../apps/web/out"`
+- [ ] **Cargo lock** — `cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml`; commit `Cargo.lock`.
+- [ ] **Disable sidecar boot for P1** — feature-flag `start_sidecar` so window opens even without a packaged binary (env `MAYRA_SKIP_SIDECAR=1`).
+- [ ] **Manual smoke** — document the exact command in `apps/desktop/README.md`.
+- [ ] **`tauri dev` script in root `package.json`** — `"dev:desktop": "pnpm --filter @mayra/desktop tauri dev"`.
+- [ ] **Tick the demo**: a 5-line note at the bottom of this phase confirming the operator saw the window.
 
 ---
 
-## Stage T2 — Pure Python modules (TDD)   `[lane: A — follow-ups only, core complete]`
+## Phase 2 — Detect active Chrome debugging sessions
 
-All 12 first-failing tests green: 35 pytest unit tests + 28 contracts vitest tests (+ contracts pytest fixture parity).
+**Goal:** Settings page has a "Detect browsers" button that lists every Chrome currently exposing `--remote-debugging-port` on `127.0.0.1` and the tabs each one has open.
 
-- [x] `redaction.py` — `redact()`, `redact_for_display()`
-- [x] `actions/schema.py` — `Action` (Pydantic v2, frozen, strict, extra='forbid')
-- [x] `actions/mapper.py` — `to_agent_browser_command()` for 5 v1 actions
-- [x] `risk.py` — `reclassify_risk()` (max-of-model-and-policy)
-- [x] `step_budget.py`
-- [x] `prompts/templates.py` — `build_prompt()` with `<content-boundaries>`
-- [x] `parser.py` — `parse_chat_and_action()`
-- [x] `snapshot.py` — `Node`, `Snapshot.from_json/find/prune`
-- [x] `perf.py` — `PerfTimer` (sync + async)
-- [x] `errors.py` — `MayraError` hierarchy with stable `code` attrs
+**Acceptance demo:** operator launches Chrome with `--remote-debugging-port=9222`, opens 2 tabs, clicks Detect in Mayra → both tabs listed with title + URL.
 
-### Follow-ups for these modules (non-blocking refinements)
-- [ ] Risk: stale-snapshot detection should check timestamp drift, not just a bool flag
-- [ ] Risk: domain check should treat `value=null navigate` as invalid (raise) instead of empty-host
-- [ ] Snapshot pruner: cap to 1500 nodes; log warning on truncation (spec §A.16)
-- [ ] Prompt builder: image bytes downsize to ≤ 1280 px long edge (spec §11.2) — Pillow dep + new test
-- [ ] History compaction helper: keep last 8 messages, drop oldest if total > 12k chars (spec §A.11)
+- [ ] **Tauri command** `probe_chrome_ports(ports: Vec<u16>) -> Vec<ChromeSession>`:
+  - [ ] Hits `http://127.0.0.1:<port>/json/version` and `/json` with 200 ms timeout each.
+  - [ ] Returns `{ port, browser, user_agent, tabs: [{title, url, ws_url, target_id}] }`.
+  - [ ] Rust unit test with mock HTTP (mockito or similar).
+- [ ] **Capability** `capabilities/chrome-probe.json` — allowlist outbound to `http://127.0.0.1:9222..9230/**`.
+- [ ] **Web hook** `useChromeProbe()` — calls the command, debounces, surfaces errors.
+- [ ] **Component** `settings/BrowserDetectionCard.tsx` + RTL test (mock the Tauri invoke).
+- [ ] **Settings page** wires the card; empty-state message; "How to enable debugging" link → `RemoteDebuggingWizard`.
+- [ ] **No orchestrator dependency** in this phase — probing is pure Tauri/HTTP.
 
 ---
 
-## Stage T3 — App skeleton (settings, logging, errors, auth)   `[lane: A]`
+## Phase 3 — Snapshot a chosen session
 
-- [x] `mayra_orchestrator/settings.py` — pydantic-settings (`MAYRA_*` env vars)
-- [x] `api/correlation.py` — request-scoped `correlation_id`
-- [x] `api/deps.py` — `require_bearer` (header **or** `?token=` query, constant-time)
-- [x] `api/exceptions.py` — `ActionValidationError → 422`, `MayraError → 500`, JSON shape `{ code, message, correlation_id }`
-- [x] `api/app.py` — `create_app()` with host-guard middleware (`127.0.0.1` / `localhost` only)
-- [x] `/healthz` (no auth)
-- [x] `__main__.py` (`uv run python -m mayra_orchestrator`)
+**Goal:** User picks one of the detected tabs → orchestrator (sidecar) connects via `agent-browser --cdp <port>`, takes a snapshot + screenshot, the UI shows node count + a 1280-px live preview.
 
-### Outstanding
-- [ ] `logging_setup.py` — **structlog** with JSON renderer in prod, console in dev; bind `correlation_id` from middleware (spec §9.1, observability rule)
-- [ ] structlog `redact_processor` wired (uses existing `redact()`)
-- [ ] Replace ad-hoc `print`/exception logging with `structlog.get_logger().info("step.completed", ...)` using stable event names from Appendix B
-- [ ] Test: `structlog.testing.capture_logs` asserts `step.completed` payload shape (spec §B.9 #5)
-- [ ] CORS middleware for `tauri://localhost` + `http://localhost:3000` (allow_credentials, no `*`)
-- [ ] Replace `MAYRA_LOG_DIR` default with `MAYRA_DATA_DIR/logs` derived path
+**Acceptance demo:** pick tab → within 2 s the LivePreviewPanel shows the page screenshot and "247 nodes" beside it.
 
----
-
-## Stage T4 — Memory tasks + first contract surface   `[lane: A]`
-
-- [x] `api/memory_tasks.py` — `MemoryTaskRegistry` (create / abort / approve / message queue)
-- [x] `api/schemas.py` — strict bodies for `tasks`/`message`/`approve`/`validate`/`logs`
-- [x] Contract tests (11): `/healthz`, 401, 400 host, create, abort, message, approve, validate, ui-logs redact, SSE, 422 envelope
-- [x] `tests/contract/conftest.py` — ASGITransport client + `FakeModelClient`/`FakeBrowser` stubs (B.8 shape)
-
-### Outstanding
-- [ ] Replace approval-id-equals-task-id stub with a real `ApprovalRegistry` keyed by uuid (so multiple in-flight approvals work)
-- [ ] `POST /v1/tasks/{id}/message` validates `task_id` belongs to current user (RLS-aware once Supabase lands)
-- [ ] Lifespan teardown: cancel all tasks, close clients (spec §4.3)
-- [ ] Per-router files (`routes/health.py`, `routes/tasks.py`, …) instead of one fat `app.py` — refactor when next route lands
+- [ ] **Sidecar packaging (dev)** — `scripts/dev-orchestrator.mjs` runs `uv run --directory apps/orchestrator python -m mayra_orchestrator --port=auto`; Tauri spawns it instead of the absent PyInstaller binary.
+- [ ] **Sidecar lifecycle in `start_sidecar`** — spawn → poll `/healthz` → emit `orchestrator-ready { port, token }` (already partly wired; finish it).
+- [ ] **Orchestrator** `POST /v1/sessions/connect { port }` → calls `agent-browser open --cdp <port> --session <session_id> --json`; returns `{ session_id }`.
+- [ ] **Orchestrator** `POST /v1/sessions/{id}/snapshot` → calls `agent-browser snapshot --session <session_id> --json --max-output 20000`; stores `last_snapshot` in memory; returns `{ node_count, screenshot_path }`.
+- [ ] **Browser adapter v1** in `mayra_orchestrator/browser/adapter.py` (only `open`, `snapshot`, `screenshot_annotated`, `close_all` for this phase).
+- [ ] **Screenshot save** — `MAYRA_DATA_DIR/screenshots/<session_id>/<step>-snapshot.webp`; recompress with Pillow (≤1280 px, q75).
+- [ ] **Tauri command** `asset_url(path)` returns `convertFileSrc`-compatible URL.
+- [ ] **Web** new route `/sessions` listing connected sessions + a "Snapshot" button → calls orchestrator, shows screenshot via `LivePreviewPanel`.
+- [ ] **agent-browser doctor** — orchestrator runs `agent-browser doctor --json` on startup; UI banner if missing.
+- [ ] **Integration test** un-skip `tests/integration/test_agent_browser_skips.py::test_open_and_snapshot` once binary installed.
 
 ---
 
-## Stage T5 — Agent loop (the core)   `[lane: A]`
+## Phase 4 — Chat skeleton (one-way streaming)
 
-Five paths must each have a failing contract test **before** the loop body is written (§B.7):
+**Goal:** User types in the composer → message hits orchestrator → SSE streams back tokens that render in the chat window. No real model yet; orchestrator can echo a canned response token-by-token. Approval modals render from a fixture event.
 
-- [ ] `agent_loop.run_task(state, app)` skeleton with cancellation checkpoints (spec §5.3)
-- [ ] `TaskState` dataclass (history deque, `paused_for`, `pending_approval`, `abort_event`, `approval_event`, `correlation_id`) (spec §5.1)
-- [ ] `step_budget` integration (consume_step / consume_repair / consume_retry)
-- [ ] Per-step pipeline:
-  - [ ] `asyncio.TaskGroup` parallel snapshot + screenshot + history
-  - [ ] `build_prompt()` → `model_client.complete_streaming()` with `on_token` SSE pump
-  - [ ] `parse_chat_and_action()` → on `SchemaRepairableError` spend 1 repair attempt
-  - [ ] `validate_against_snapshot(action, snapshot)` (ref exists, fresh)
-  - [ ] `reclassify_risk()`
-  - [ ] Approval gate via `asyncio.Event` with `wait_for(timeout=300)` (F10)
-  - [ ] `browser.execute(action)` + `BrowserResult`
-  - [ ] `save_screenshot()` (local file, per §C)
-  - [ ] `step.completed` structlog log (per-step JSON shape, observability rule)
-  - [ ] `is_terminal()` → `done event status=success`
-- [ ] Wire `/v1/chat/stream` to a real per-task `asyncio.Queue` fed by the loop, replacing the current canned 4-event stub
-- [ ] Wire `/v1/tasks` to spawn the loop into `TaskRegistry: dict[task_id, asyncio.Task]`
-- [ ] Wire `/v1/tasks/{id}/abort` to `task.cancel()` + await `CancelledError`
-- [ ] `/v1/tasks/{id}/message` queues into `state.history` for next prompt (F8)
+**Acceptance demo:** type "hello", see tokens stream in for ~1 s, then a `done success` event closes the message; click an "approval" dev button → modal renders → approve closes it.
 
-### Five contract tests (red first)
-- [ ] **Success** path — fake model returns valid action → executed → `done success`
-- [ ] **Approval** path — model returns delete-button click → approval event → `approve` releases loop
-- [ ] **Abort** path — long-running task → POST abort → `done aborted` within 1 s
-- [ ] **Budget exhausted** path — set `max_steps=1` → after one step → `done budget_exhausted`
-- [ ] **Repair-then-fail** path — first response malformed, second still malformed → `done failed` with `repair_budget`
+- [ ] **Web wiring** — `useChatStream(taskId)` already exists; verify it consumes `token`, `action`, `status`, `approval`, `done`.
+- [ ] **Orchestrator** echo-mode behind `MAYRA_DEV_ECHO=1`: stub stream emits 1 token per 50 ms; on `task.message` arrival, emits a `system_status` + `done success`.
+- [ ] **Approval dev hook** — `POST /v1/tasks/{id}/inject_approval` (dev only, env-gated) emits a synthetic `approval_request`; approve flow exercised end-to-end through `MessageApprovalRequest` → `/v1/actions/approve`.
+- [ ] **Abort wire** — `AbortButton` calls `/v1/tasks/{id}/abort`, UI handles `done aborted`.
+- [ ] **Composer** sends message via `/v1/tasks/{id}/message`, history reducer appends.
+- [ ] **RTL tests** assert token stream appends to the last assistant message; abort disables button until `done`.
 
 ---
 
-## Stage T6 — Provider HTTP adapters   `[lane: C]`
+## Phase 5 — First real task on Gemini
 
-- [x] `providers/gemini.py` — `gemini_list_models(client, api_key)` health probe
-- [x] 4 respx tests (200, 401, 429, 503)
+**Goal:** A working agent loop. User pastes a Gemini key into Settings, picks a session, types "click the sign-in link" → the orchestrator snapshots, prompts Gemini, parses the action, executes it via agent-browser, returns `done success`. No risk gates yet (everything low risk by default). Budget = 5 steps.
 
-### Outstanding
-- [ ] `providers/base.py` — `ModelClient` Protocol (`complete_streaming`, `health_check`, `aclose`) (spec §6.1)
-- [ ] `providers/gemini.py` — full `GeminiClient` (vision, streaming, `inline_data` for WebP) (spec §6.2)
-- [ ] `providers/grok.py` — OpenAI-compat schema, data-URL image, streaming
-- [ ] `providers/cloudflare.py` — `@cf/meta/llama-3.2-11b-vision-instruct`, byte image
-- [ ] `providers/factory.py` — `build_provider_clients(settings)`; one `httpx.AsyncClient` each in `lifespan`
-- [ ] `tenacity` retry policy: exp jitter, retry on 429/5xx, non-retryable on 401/403
-- [ ] `aiolimiter.AsyncLimiter(throttle_rpm, 60)` per provider + `asyncio.Semaphore(2)` per provider (spec §6.3)
-- [ ] `respx` tests per provider: happy path, retry-after-429, non-retryable 401, streaming chunks → `on_token`
-- [ ] Wire `POST /v1/settings/validate` to actually call `gemini_list_models` (or grok/cloudflare equivalents) when API key present
-- [ ] Provider key handling: read `MAYRA_PROVIDER_KEYS_BASE64` once at startup → `dict[str, SecretStr]`, then `os.environ.pop(...)` (spec §6.4)
+**Acceptance demo:** on a local fixture HTML page (`tests/fixtures/sites/login.html`) the agent clicks `#sign-in` and reports success within 10 s.
 
----
-
-## Stage T7 — `agent-browser` adapter   `[lane: B]`
-
-- [ ] `browser/adapter.py` — `AgentBrowserAdapter` (`doctor`, `open`, `snapshot`, `screenshot_annotated`, `execute`, `close_all`)
-- [ ] `browser/policies/mayra-default.json` — deny `eval/download/upload/clipboard/cookies/storage/network.route/addinitscript`
-- [ ] `agent-browser doctor --json` at startup; gate task execution
-- [ ] Per-task `--session $task_id`, `--allowed-domains`, `--content-boundaries`, `--max-output 20000`, `--action-policy`, `--confirm-actions eval,download,upload`
-- [ ] Headed by default (no `--headless`); CDP attach mode (`--cdp <port>`) when user picked existing Chrome (F4)
-- [ ] WebP screenshot recompress (Pillow, quality 75, ≤1280 px long edge) (spec §11.2)
-- [ ] `save_screenshot(state, screenshot, kind)` writes to `MAYRA_DATA_DIR/screenshots/<task_id>/<step>-<kind>.webp` (spec §C.4)
-- [ ] Manual takeover detection: compare `observation_hash`; matching → 30 s auto-resume, differing → wait for `approve resume:<task_id>` (spec §A.6, F11)
-- [ ] OTP detection: pattern matches password/otp/verification on textbox → emit `wait` action + Tauri notification (F12)
-- [ ] `BrowserError` on non-zero exit; **no** auto-retry of whole task (spec §7.3)
-- [ ] On orchestrator shutdown: `agent-browser close --all` in lifespan finally
-- [ ] Integration test (skipped today): see `tests/integration/test_agent_browser_skips.py` and unskip per case
+- [ ] **Provider key flow** — Settings UI calls `save_provider_key("gemini", key)` → keyring → sidecar restart with `MAYRA_PROVIDER_KEYS_BASE64`.
+- [ ] **`providers/base.py`** — `ModelClient` Protocol; **`providers/gemini.py`** — full `complete_streaming(prompt, on_token)` with vision + `inline_data` for WebP.
+- [ ] **Provider factory** `providers/factory.py` — one `httpx.AsyncClient` per provider in lifespan.
+- [ ] **Agent loop integration** — `run_agent_loop` consumes `ModelClient`, calls `parse_chat_and_action`, executes via `BrowserAdapter`, emits SSE events into the task queue.
+- [ ] **Browser adapter `execute(Action)`** — maps to `click` / `fill` / `wait` / `navigate` (per spec §A.10).
+- [ ] **Five contract paths** (spec §B.7 — all five required for green) — re-run the existing contract tests after wiring real providers:
+  - [ ] Success
+  - [ ] Approval gate (use stub-only here, real gating in P6)
+  - [ ] Abort
+  - [ ] Budget exhausted
+  - [ ] Repair-then-fail
+- [ ] **Fixture site** `tests/fixtures/sites/login.html` (static, no JS frameworks).
+- [ ] **Throttle** `aiolimiter.AsyncLimiter(10, 60)` per provider.
 
 ---
 
-## Stage T8 — Tauri shell (`apps/desktop`)   `[lane: E]`
+## Phase 6 — Safety pass (HITL)
 
-> T8 desktop shell: env injection, crash backoff, teardown hooks, `scripts/rename-sidecar.mjs`, and bundle icons are implemented. Commit `Cargo.lock` with `cargo generate-lockfile` when Rust is available—CI/agents without `cargo` may skip.
+**Goal:** Risk reclassification + approval gating + redaction are wired and visible end-to-end. Manual takeover detection works.
 
-### Project setup
-- [x] `apps/desktop/package.json` (`tauri`, `dev`, `build`, `sidecar:build` → `rename-sidecar.mjs`, tests)
-- [~] `apps/desktop/src-tauri/Cargo.toml`, `Cargo.lock` — commit `Cargo.lock` after `cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml` where Rust is installed (CI/agent hosts without `cargo` skip).
-- [x] `tauri.conf.json` per spec §2.1 (NSIS, embedBootstrapper, currentUser, updater inactive)
-- [x] CSP: `default-src 'self'`, `connect-src 'self' http://127.0.0.1:* https://*.supabase.co`, `img-src 'self' data: asset: https://*.supabase.co`
-- [x] `app.security.assetProtocol.scope = ["$APPLOCALDATA/Mayra/screenshots/**"]` (spec §C.3)
+**Acceptance demo:** on a fixture site with a "Delete account" button, "delete my account" → high-risk approval modal appears with annotated screenshot → reject ends loop with `done aborted`.
 
-### Capabilities (split per surface, spec §2.2)
-- [x] `capabilities/main-window.json`
-- [x] `capabilities/sidecar.json` — `shell:allow-execute` with arg validators (`^--port=\d{4,5}$`, `^--token=…$`, `^--data-dir=…$`)
-- [x] `capabilities/secure-store.json` (reserved for future plugin IPC; Rust uses `keyring` crate directly today)
-- [x] `capabilities/notifications.json`
-- [x] `capabilities/updater.json` (declared but inactive in `tauri.conf`)
-
-### Rust commands (spec §2.3, narrow surface)
-- [x] `start_sidecar` → returns `{ port, token }`
-- [x] `stop_sidecar`
-- [x] `save_provider_key(provider, key)` → keyring + sidecar restart
-- [x] `provider_key_status(provider)` → `{ configured, last4 }`
-- [x] `get_device_id`
-- [x] `open_data_dir`
-- [x] `notify(title, body)`
-- [x] `os_open_external(url)` — allowlist `https://*.supabase.co`
-
-### Sidecar lifecycle (`sidecar.rs`, spec §2.4)
-- [x] Free-port allocator + 48-byte random token — `pick_unused_loopback_port`, `generate_sidecar_token` in `lib.rs`
-- [x] Spawn orchestrator with CLI args plus env `MAYRA_TAURI_ORIGIN`, optional `MAYRA_PROVIDER_KEYS_BASE64`, optional `MAYRA_SUPABASE_*` (keyring `supabase_*` attributes)
-- [x] Health-poll `/healthz` 200 ms × 50 → emit `orchestrator-ready { port, token }`
-- [x] Backoff restart on crash (1, 2, 4, 8 s), up to 4 attempts → emit `orchestrator-failed`
-- [x] On `RunEvent::ExitRequested` and `RunEvent::Exit`: `stop_sidecar_inner` → `POST /v1/shutdown` → wait 2 s → `child.kill()`
-
-### Other plugins
-- [x] `tauri-plugin-single-instance` (focus existing window) (F1)
-- [x] Device id + provider keys via Rust `keyring` crate (no `tauri-plugin-store`); Supabase secrets optional via same crate
-- [x] `tauri-plugin-log` — default targets include rotated `LogDir` (app log dir per OS)
-- [x] `tauri-plugin-notification` for OTP / retention warnings
-
-### Rust tests (`cargo test`)
-- [x] `picks_an_unused_loopback_port_and_releases_it`
-- [x] `generates_token_of_length_48_url_safe`
-- [x] `roundtrip_device_id_via_keyring` (mock backend)
-- [x] `disallows_unregistered_sidecar_argument` (parse capability JSON, assert validators)
+- [ ] **`reclassify_risk()` wired** into `run_agent_loop` (already exists as module — integrate, with tests in `test_agent_loop.py`).
+- [ ] **Approval modal** shows annotated screenshot (refs labelled); reject → `done aborted`; approve → loop continues.
+- [ ] **Redaction** in action logs — password / OTP / secret-pattern fields show `[REDACTED:<reason>]`.
+- [ ] **OTP detection** — pattern match on textbox role+name `code|otp|verification` → emit `wait` + Tauri notification (F12).
+- [ ] **Manual takeover** — observation_hash diff before each step; mismatch → 30 s auto-resume or `approve resume:<task_id>` (F11, spec §A.6).
+- [ ] **`agent-browser` policy file** `policies/mayra-default.json` denies `eval/download/upload/clipboard/cookies/storage/network.route/addinitscript`.
+- [ ] **Tests**:
+  - [ ] Risk: stale-snapshot detection by timestamp drift.
+  - [ ] Risk: domain check for `navigate` (treat `value=null` as invalid).
+  - [ ] RTL: `MessageActionLog` renders `[REDACTED:password_field]`.
+  - [ ] RTL: `MessageApprovalRequest` calls `/v1/actions/approve` on click.
 
 ---
 
-## Stage T9 — Next.js UI (`apps/web`)   `[lane: F]`
+## Phase 7 — Logs & persistence
 
-### Done
-- [x] `lib/orchestrator-client.ts` (`createTask`, `abort`, `postTaskMessage`)
-- [x] `lib/sse.ts` (`parseSseText`)
-- [x] Vitest + RTL (13 tests green: lib + `next-config` + §B.4 UI rows)
+**Goal:** Every task writes structured rows to Supabase; `/logs` lists tasks; `/logs/[task_id]` shows the action timeline + screenshots; retention coroutine deletes screenshots > 7 d.
 
-### Project setup
-- [x] `apps/web/next.config.ts` per spec §3.1 (`output:'export'`, `images.unoptimized:true`, `trailingSlash:true`; `typedRoutes` top-level in Next 15.5+; `transpilePackages: ['@mayra/contracts']`)
-- [x] `apps/web/tsconfig.json` extends `@mayra/config/tsconfig.base.json` (`packages/config` added)
-- [x] Tailwind or vanilla CSS — **vanilla** (`src/styles/globals.css`, no Tailwind)
-- [x] Install React 19 + Next 15 deps
-- [x] `src/app/layout.tsx`, `src/app/page.tsx` (root; App Router under `src/app/` per spec §3.3 tree)
+**Acceptance demo:** complete one task → refresh `/logs` → see it; click → see steps, actions, screenshots; wait 7 d (or fast-forward via env) → screenshots gone.
 
-### Routes (F1–F20)
-- [x] `/` — onboarding gate (sidecar + session onboarding flag → redirect `/chat`; device/provider deep checks wait on Tauri IPC)
-- [x] `/chat`
-- [x] `/settings`
-- [x] `/logs` — list shell (Supabase pagination = T10)
-- [~] `/logs/[task_id]` — drill-down via **`/logs?t=<task_id>`** (query on same static page; arbitrary path segments are not emitted in `output: 'export'` without per-id HTML — see spec §3.2 note on client params)
-
-### Hooks & state
-- [x] `useTauri()` — null until mounted
-- [x] `useSidecarReady()` — listens for `orchestrator-ready`
-- [x] `useChatStream` — `EventSource` + `reduceChatStreamEvent` (`start(taskId)` after task create)
-- [x] `OrchestratorProvider` / `useOrchestrator` (React context; **no Jotai** per §A.18)
-
-### Components
-- [x] `chat/ChatWindow`, `MessageList`, `MessageUser`, `MessageAssistant`, `MessageSystemStatus`, `MessageActionLog`, `MessageApprovalRequest`, `Composer`, `TypingIndicator`, `AbortButton`
-- [x] `onboarding/ProviderSetupCard`, `ChromeChoiceCard`, `RemoteDebuggingWizard` (Windows path + copyable launch cmd) (F4)
-- [x] `settings/ProviderSettings`, `SafetySettings`, `RetentionSettings` (placeholders; persistence via `/v1/settings` when orchestrator exposes it)
-- [x] `live/LivePreviewPanel` — `convertFileSrc` when `@tauri-apps/api` available (F7)
-- [x] `common/AnnotatedScreenshot`, `Modal`, `Banner`, `ConfirmDialog`, `SiteNav`
-
-### Vitest + RTL tests (§B.4)
-- [x] Token append — **`src/lib/chat-stream-reducer.test.ts`** (same fold as `useChatStream`)
-- [x] `MessageActionLog` renders `[REDACTED:password_field]` for password targets
-- [x] `ChromeChoiceCard` selection calls `createTask` with correct payload (`testCreateOnManaged`)
-- [x] `AbortButton` disables without `taskId`; **orchestrator `abort()`** covered in integration; button calls `onAbort` / respects `disabled`
-- [x] `MessageApprovalRequest` calls `POST /v1/actions/approve` on Approve
-
-### Supabase browser client
-- [x] `lib/supabase-browser.ts` — `@supabase/supabase-js`; env `NEXT_PUBLIC_SUPABASE_*` optional in dev
-- [~] First-run anonymous sign-in in `SupabaseBootstrap`; **`device_id` → `user_metadata`** when `get_device_id` Tauri command is wired (F2)
+- [ ] **Migrations** `supabase/migrations/{0001_init.sql, 0002_rls.sql}` (sessions, tasks, steps, actions, screenshots, evaluations) — spec §8.1.
+- [ ] **No** storage migration (per §C, screenshots stay local); **no** server-side retention SQL job.
+- [ ] **Service-role client** `supabase/client.py` + `repositories.py` (insert_session/task/step/action/screenshot/evaluation, all redact + explicit `user_id`).
+- [ ] **First-task lazy session** — no `/v1/sessions` endpoint (spec §A.5).
+- [ ] **`/logs` page** — Supabase paginated list (browser client w/ publishable key + anon JWT).
+- [ ] **`/logs/[task_id]`** — client-rendered timeline + screenshot thumbnails via `convertFileSrc`.
+- [ ] **structlog wiring** — `logging_setup.py` (JSON in prod, console in dev, `redact_processor`, `correlation_id` from middleware), replace `print()`s; `step.completed` log per spec §9.1 / Appendix B.
+- [ ] **Retention loop** `retention.py` — every 6 h, delete `MAYRA_DATA_DIR/screenshots/*` older than 7 d (configurable).
+- [ ] **Tests**:
+  - [ ] Repo insert step → no provider key / password / OTP lands in any column (grep).
+  - [ ] RLS denies cross-user reads (local Supabase via CLI).
 
 ---
 
-## Stage T10 — Supabase   `[lane: D]`
+## Phase 8 — Packaging + extra providers + bench
 
-- [ ] `supabase/config.toml`
-- [ ] `supabase/migrations/0001_init.sql` — sessions, tasks, steps, actions, screenshots, evaluations (spec §8.1)
-- [ ] `supabase/migrations/0002_rls.sql` — `enable + force RLS`, permissive own-rows, restrictive deny update/delete on audit, anon-no-delete on tasks
-- [ ] **Drop** `0003_storage.sql` (screenshots local per §C)
-- [ ] **Drop** `0004_retention.sql` (replaced by orchestrator coroutine §C.6)
-- [ ] `seed.sql` (optional dev fixture)
-- [ ] `supabase/client.py` — service-role client (orchestrator)
-- [ ] `supabase/repositories.py` — `insert_session/task/step/action/screenshot/evaluation` (all redact + explicit `user_id`)
-- [ ] `retention.py` — `retention_loop()` deletes local screenshot dirs + old tasks every 6 h (spec §C.6)
-- [ ] First-task lazy session creation (no explicit `/v1/sessions` endpoint per §A.5, F5)
-- [ ] Tests: pytest fixture spinning local Supabase via `supabase` CLI, asserts RLS denies cross-user reads
-- [ ] Repository test: insert step → grep that no provider key / password value lands in any column
+**Goal:** A signed-ish NSIS installer that another machine can run; second provider (Grok or Cloudflare) wired; bench runner executing 5 fixture tasks.
 
----
+**Acceptance demo:** install `mayra-setup.exe` on a clean Windows VM → run one benchmark → installer reports success.
 
-## Stage T11 — Benchmarks, packaging, release   `[bench → lane H, packaging+CI → lane G]`
-
-### Bench
-- [ ] `bench/runner.py` (spec §13.2) — runs YAML specs, writes to `evaluations`
-- [ ] `bench/tasks/<name>.yaml` — first benchmark spec (per PRD §3, 5–10 curated)
-- [ ] `bench/baselines/<name>.spec.ts` — Playwright deterministic baseline
-- [ ] `success_criteria` evaluator: `agent-browser get url` / `get text` / file-existence (no LLM judging)
-- [ ] At least 3 fixture sites in `tests/fixtures/sites/`
-
-### Packaging
-- [x] `scripts/rename-sidecar.mjs` — copies built orchestrator to `src-tauri/binaries/mayra-orchestrator-<triple>.exe` (or non-`.exe` on Unix)
-- [ ] `scripts/release-pipeline.mjs` — full chain (contracts codegen → next build → pyinstaller → tauri build)
-- [ ] PyInstaller spec: `--onedir --strip --paths apps/orchestrator --paths packages/contracts/python`
-- [ ] `pnpm tauri build` produces NSIS `-setup.exe`
-- [ ] Document `npm i -g agent-browser@<pinned>` + `agent-browser install` in onboarding (spec §A.17)
-- [ ] Updater wiring deferred (§A.8) — keep `pubkey` placeholder
-
-### CI (`.github/workflows/`)
-- [ ] `verify.yml` — matrix: ubuntu (lint+typecheck+test), windows (full + integration), macos smoke
-- [ ] Cache pnpm store, uv cache, cargo registry, Tauri bundler
-- [ ] `release.yml` — tag → builds + uploads NSIS artifact
+- [ ] **PyInstaller spec** `apps/orchestrator/build.spec` (`--onedir --strip --paths apps/orchestrator --paths packages/contracts/python`).
+- [ ] **`scripts/rename-sidecar.mjs`** copies to `src-tauri/binaries/mayra-orchestrator-<triple>.exe` (already exists; verify).
+- [ ] **`scripts/release-pipeline.mjs`** — contracts codegen → next build → pyinstaller → tauri build.
+- [ ] **`pnpm tauri build`** produces NSIS `-setup.exe`.
+- [ ] **Second provider** — pick **one** of:
+  - [ ] `providers/grok.py` (OpenAI-compat, data-URL image, streaming) + 4 respx tests.
+  - [ ] `providers/cloudflare.py` (`@cf/meta/llama-3.2-11b-vision-instruct`, byte image) + 4 respx tests.
+- [ ] **Bench**:
+  - [ ] `bench/runner.py` (spec §13.2) writing to `evaluations`.
+  - [ ] 3 `bench/tasks/<name>.yaml` benchmarks + 3 `tests/fixtures/sites/*.html`.
+  - [ ] `success_criteria` evaluator using `agent-browser get url`/`get text` — **no LLM judging**.
+- [ ] **CI** `.github/workflows/verify.yml` — ubuntu (lint+typecheck+test), windows (full + integration); cache pnpm, uv, cargo.
+- [ ] **Updater wiring deferred** (spec §A.8) — leave `pubkey` placeholder.
 
 ---
 
-## Cross-cutting / non-functional
+## Phase 9 (stretch) — Observability, perf, security audit
+
+Not blocking a release. Run when bored, between phases, or before public launch.
 
 ### Security audit (spec §10)
-- [ ] Verify host header guard rejects external `Host`
-- [ ] Verify token compared with `hmac.compare_digest`
-- [ ] Verify provider keys never appear in any log file (grep test post-run)
-- [ ] Verify `agent-browser` invocation never forwards model output as args
-- [ ] Verify Supabase secret key absent from web bundle (build inspect)
-- [ ] Verify `MAYRA_PROVIDER_KEYS_BASE64` env var wiped after read
+- [ ] Host-header guard rejects external `Host`.
+- [ ] Token compared with `hmac.compare_digest`.
+- [ ] Provider keys never appear in any log file (grep test post-run).
+- [ ] `agent-browser` invocation never forwards model output as args.
+- [ ] Supabase secret key absent from web bundle (build inspect).
+- [ ] `MAYRA_PROVIDER_KEYS_BASE64` env var wiped after read.
 
 ### Performance budgets (spec §11)
-- [ ] Snapshot+screenshot parallel ≤ 600 ms p95
-- [ ] Per-step total ≤ 3.5 s p95 (post §C local screenshots)
-- [ ] SSE first byte ≤ 800 ms after step start
-- [ ] Sidecar boot ≤ 1.5 s
+- [ ] Snapshot+screenshot parallel ≤ 600 ms p95.
+- [ ] Per-step total ≤ 3.5 s p95.
+- [ ] SSE first byte ≤ 800 ms after step start.
+- [ ] Sidecar boot ≤ 1.5 s.
 
-### Observability (spec §9)
-- [ ] structlog `JSONRenderer` in prod, `ConsoleRenderer` in dev
-- [ ] Per-step `step.completed` log with full schema (correlation_id, observation_hash, intended/executed action, latency_ms.{model,browser,total}, retries, step_budget_remaining)
-- [ ] Stable event names: see Appendix B of the spec
-- [ ] `redact_processor` runs on every record
-- [ ] No `print()` anywhere in `mayra_orchestrator/`
-
-### TDD discipline
-- [x] §B.1 — 12 first-failing pure tests green (35 unit + 4 contracts)
-- [x] §B.2 — 11 contract tests green (httpx ASGITransport)
-- [~] §B.3 — 4 integration files exist, all `pytest.skip` until stage T7 lands
-- [x] §B.4 — 13 web tests green (lib + next-config + tsconfig extends + RTL rows)
-- [~] §B.5 — 4 Rust tests in `apps/desktop/src-tauri/src/lib.rs` — run `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`; add committed `Cargo.lock` when generated locally
-- [ ] §B.6 — coverage gates wired (Python ≥ 85 % branch, TS ≥ 80 %, Rust ≥ 70 %)
+### Observability completeness (spec §9)
+- [ ] Stable event names per Appendix B.
+- [ ] No `print()` anywhere in `mayra_orchestrator/`.
+- [ ] Coverage gates: Python ≥ 85 % branch, TS ≥ 80 %, Rust ≥ 70 %.
 
 ---
 
-## "Done already" snapshot (as of last session)
+## "Done already" snapshot
 
 | Suite | Count | Status |
 |--------|--------|--------|
-| Python unit (`tests/unit`) | 50 | ✅ green |
-| Python provider (gemini respx) | 4 | ✅ green |
-| Python contract (`tests/contract`) | 11 | ✅ green |
-| Python integration (skipped) | 4 | ⏸ awaiting T7 |
-| TS contracts vitest (`packages/contracts`) | 28 | ✅ green |
-| TS contracts pytest (`mayra-contracts`) | 28 | ✅ green |
-| TS web vitest (`apps/web`) | 13 | ✅ green |
-| Desktop manifest (`npm --prefix apps/desktop run test`) | 3 | ✅ green *(not yet wired into root `npm test`)* |
+| Python unit (`tests/unit`) | 50 | ✅ |
+| Python provider (gemini respx) | 4 | ✅ |
+| Python contract (`tests/contract`) | 11 | ✅ |
+| Python integration (skipped) | 4 | ⏸ awaiting Phase 3 |
+| TS contracts vitest (`packages/contracts`) | 28 | ✅ |
+| Contracts pytest (`mayra-contracts`) | 28 | ✅ |
+| TS web vitest (`apps/web`) | 13 | ✅ (after `npm --prefix apps/web install`) |
+| Desktop manifest (`apps/desktop`) | 3 | ✅ |
 | **Total green** | **134** | |
 
-Modules implemented:
+Modules in tree:
 
 ```
 apps/orchestrator/mayra_orchestrator/
-├─ __init__.py, __main__.py
 ├─ settings.py, errors.py, perf.py, step_budget.py, parser.py
 ├─ redaction.py, snapshot.py, risk.py
-├─ actions/{__init__.py, schema.py, mapper.py}
-├─ prompts/{__init__.py, templates.py}
-├─ providers/{__init__.py, gemini.py}            # only list_models probe
-└─ api/{__init__.py, app.py, correlation.py, deps.py,
-        exceptions.py, memory_tasks.py, schemas.py}
+├─ actions/{schema.py, mapper.py}
+├─ prompts/templates.py
+├─ providers/gemini.py                # list_models probe only
+├─ agent_loop/ (run_agent_loop, contracts coverage)
+└─ api/{app.py, correlation.py, deps.py, exceptions.py,
+        memory_tasks.py, approval_registry.py, routes/**, schemas.py}
 
+apps/desktop/{package.json, src-tauri/{Cargo.toml, src/lib.rs}}   # IPC, sidecar env+supervise, icons
+apps/web/{next.config.ts, src/app/**, src/components/**,
+          src/hooks/**, src/lib/**, src/providers/**, src/styles/globals.css}
 packages/config/{package.json, tsconfig.base.json}
-
-packages/contracts/{schemas/action.schema.json, fixtures/*.json,
-                    test/schema.test.ts, package.json, tsconfig.json,
-                    vitest.config.ts}
-
-apps/web/{next.config.ts, next-env.d.ts, package.json, tsconfig.json, vitest.config.ts}
-apps/web/src/app/{layout.tsx, page.tsx, chat/page.tsx, settings/page.tsx,
-                  logs/page.tsx, logs/LogsClient.tsx}
-apps/web/src/components/{chat/**, onboarding/**, settings/**, live/**, common/**}
-apps/web/src/hooks/{useTauri.ts, useSidecarReady.ts, useChatStream.ts}
-apps/web/src/lib/{orchestrator-client.ts, orchestrator-client.test.ts,
-                  sse.ts, sse.test.ts, orchestrator-mutations.ts, schemas.ts,
-                  redact.ts, redact.test.ts, chat-stream-reducer.ts,
-                  chat-stream-reducer.test.ts, supabase-browser.ts, tauri.ts,
-                  mock-sidecar.ts, tsconfig-extends.test.ts}
-apps/web/src/providers/{orchestrator-context.tsx, supabase-bootstrap.tsx}
-apps/web/src/styles/globals.css
-apps/web/src/test/setup.ts
-apps/web/src/next-config.test.ts
-
-apps/desktop/{package.json, tests/package-manifest.test.mjs,
-             src-tauri/Cargo.toml, src-tauri/src/lib.rs}
+packages/contracts/{schemas/**, fixtures/**, src/generated.ts, python/mayra_contracts/**}
+scripts/{rename-sidecar.mjs, contracts-check.mjs}
 ```
 
-T8 desktop shell is complete (`Lane E`): IPC, sidecar env + backoff supervise, bundle icons, `scripts/rename-sidecar.mjs`; remaining packaging polish is **T11** (`pnpm tauri build` CI, PyInstaller chain). T9 web UI complete (`Lane F`): App Router routes, hooks, RTL tests, supabase bootstrap. Still open: `supabase/`, `bench/`, `agent-browser` adapter wiring, full agent loop integration, real provider streaming, structlog wiring, CI workflows.
+Still missing: agent-browser adapter, full agent loop wiring to a real provider, Supabase repos & migrations, structlog wiring, CI workflows, PyInstaller spec, bench harness.
 
 ---
 
-## How to use this list
+## How to work this list
 
-1. Pick a **lane** from the *Parallel lanes* table that nobody else is on.
-2. `git fetch && git switch -c lane/<id>-<slug> origin/main`.
-3. Open this file. Find the topmost `[ ]` row inside any stage tagged with your lane.
-4. Write the failing test first (`tests/unit/test_<unit>.py` or `tests/contract/...`).
-5. Run `npm run test` — confirm the new test fails for the right reason.
-6. Implement minimum code to pass; stay inside your lane’s file scope (see the *Owner scope* column).
-7. Re-run; confirm green.
-8. Flip `[ ]` → `[x]` in this file, commit in the small-commit style:
-   - `test(<lane>): <unit> — red`
-   - `feat(<lane>): <unit> — green`
-   - `refactor(<lane>): <unit>` (optional)
-   - `docs: tick <unit> in build checklist`
-9. Open a PR for your branch when the stage (or a coherent slice) is complete.
+1. Read **MAYRA_TECHNICAL_SPEC.md** sections referenced by the current phase before writing code.
+2. Find the topmost `[ ]` row in the **lowest unfinished phase** — phases are strictly ordered.
+3. Within a phase, multiple agents can split rows by file scope (e.g. one on `tauri.conf.json`, another on `next.config.ts`), but no one starts the next phase until the current phase's **acceptance demo** is reproduced.
+4. Test-first per `.cursor/rules/mayra-small-commits.mdc`:
+   - `test(p<N>): <what> — red`
+   - `feat(p<N>): <what> — green`
+   - `refactor(p<N>): <what>` (optional)
+   - `docs: tick <what> in build checklist`
+5. After each phase, run the acceptance demo manually on the operator's machine; record the date + git SHA in a one-line note appended to that phase.
 
-If your lane is blocked by a shared file (see *Shared files* table), pause and either (a) open a small targeted PR from a different lane to unblock, or (b) escalate to the operator.
+When two agents need to touch the same file, prefer the **`wire(app)` seam** pattern in the orchestrator and the **`<Section>Card` component** pattern in the web app to keep diffs additive.
+
+---
+
+## Appendix — original T-stage → Phase mapping (for spec cross-reference)
+
+| T-stage | Folded into |
+|---------|-------------|
+| T0 Repo scaffolding | done; remaining `.pre-commit-config.yaml` → Phase 8 (CI) |
+| T1 Contracts | done |
+| T2 Pure Python modules | done; follow-ups absorbed into Phase 6 |
+| T3 App skeleton | done; **structlog wiring → Phase 7** |
+| T4 Memory tasks + first contract surface | done |
+| T5 Agent loop | module exists; **wired in Phase 5** (success/abort/budget/repair) and Phase 6 (approval/risk) |
+| T6 Provider clients | gemini list_models done; **gemini streaming → Phase 5**, second provider → Phase 8 |
+| T7 agent-browser adapter | **Phase 3** (open/snapshot/screenshot), **Phase 5** (execute), **Phase 6** (policies/OTP/takeover) |
+| T8 Tauri shell | done; **chrome-probe → Phase 2**, **sidecar dev wiring → Phase 3**, **packaging → Phase 8** |
+| T9 Next.js UI | App Router done; **chat wiring → Phase 4**, **logs → Phase 7** |
+| T10 Supabase | **Phase 7** |
+| T11 Bench + packaging + CI | **Phase 8** |
 
 ---
 
