@@ -36,3 +36,9 @@ class ProviderError(MayraError):
 
 class UserInterventionRequired(MayraError):
     """Approval was rejected, timed out, or 2FA is needed."""
+
+
+class OwnerMismatchError(MayraError):
+    """Caller cannot operate on another principal's task."""
+
+    code: str = "owner_mismatch"
