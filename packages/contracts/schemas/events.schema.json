@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mayra.local/contracts/events.schema.json",
+  "title": "SseEventPayload",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "delta"],
+      "properties": {
+        "kind": { "const": "token" },
+        "delta": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "message"],
+      "properties": {
+        "kind": { "const": "action" },
+        "message": {
+          "$ref": "./message.schema.json#/$defs/ActionLogMessage"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "message"],
+      "properties": {
+        "kind": { "const": "status" },
+        "message": {
+          "$ref": "./message.schema.json#/$defs/SystemStatusMessage"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "message"],
+      "properties": {
+        "kind": { "const": "approval" },
+        "message": {
+          "$ref": "./message.schema.json#/$defs/ApprovalRequestMessage"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "task_id", "status"],
+      "properties": {
+        "kind": { "const": "done" },
+        "task_id": { "type": "string", "minLength": 1 },
+        "status": {
+          "type": "string",
+          "enum": ["success", "failed", "aborted", "budget_exhausted", "degraded"]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "code", "message", "correlation_id"],
+      "properties": {
+        "kind": { "const": "error" },
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "maxLength": 4000 },
+        "correlation_id": { "type": "string", "minLength": 8 }
+      }
+    }
+  ]
+}

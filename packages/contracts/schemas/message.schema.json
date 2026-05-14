@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mayra.local/contracts/message.schema.json",
+  "title": "ChatMessage",
+  "$defs": {
+    "ActionLogMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "action", "executed", "step", "ts"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "action_log" },
+        "action": { "$ref": "./action.schema.json" },
+        "executed": { "type": "boolean" },
+        "screenshot_path": { "type": ["string", "null"] },
+        "step": { "type": "integer", "minimum": 0 },
+        "ts": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ApprovalRequestMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "action", "screenshot_path", "expires_at", "ts"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "approval_request" },
+        "action": { "$ref": "./action.schema.json" },
+        "screenshot_path": { "type": "string", "minLength": 1 },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "ts": { "type": "string", "format": "date-time" }
+      }
+    },
+    "SystemStatusMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "text", "severity", "ts"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "system_status" },
+        "text": { "type": "string", "maxLength": 2000 },
+        "severity": { "type": "string", "enum": ["info", "warn", "error"] },
+        "ts": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "text", "ts"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "user" },
+        "text": { "type": "string", "maxLength": 32000 },
+        "ts": { "type": "string", "format": "date-time" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "markdown", "ts"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "assistant" },
+        "markdown": { "type": "string", "maxLength": 128000 },
+        "ts": { "type": "string", "format": "date-time" },
+        "streaming": { "type": "boolean" }
+      }
+    },
+    { "$ref": "#/$defs/SystemStatusMessage" },
+    { "$ref": "#/$defs/ActionLogMessage" },
+    { "$ref": "#/$defs/ApprovalRequestMessage" }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "action": "navigate",
+  "target_ref": null,
+  "value": "not-a-uri",
+  "risk": "low",
+  "reason": "bad url"
+}

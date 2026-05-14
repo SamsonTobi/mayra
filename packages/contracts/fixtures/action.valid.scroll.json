@@ -1,0 +1,7 @@
+{
+  "action": "scroll",
+  "target_ref": null,
+  "value": "down:400",
+  "risk": "low",
+  "reason": "reveal footer links"
+}

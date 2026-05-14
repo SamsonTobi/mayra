@@ -1,0 +1,15 @@
+{
+  "id": "m-log-1",
+  "kind": "action_log",
+  "action": {
+    "action": "click",
+    "target_ref": "@e3",
+    "value": null,
+    "risk": "low",
+    "reason": "open menu"
+  },
+  "executed": true,
+  "screenshot_path": null,
+  "step": 3,
+  "ts": "2026-05-14T12:00:11Z"
+}

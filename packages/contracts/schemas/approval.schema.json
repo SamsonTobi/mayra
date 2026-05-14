@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mayra.local/contracts/approval.schema.json",
+  "title": "ApprovalDecision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["approval_id", "decision"],
+  "properties": {
+    "approval_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque id from orchestrator, or synthetic resume:<task_id> per spec §A.6"
+    },
+    "decision": { "type": "string", "enum": ["approve", "reject"] },
+    "reason": { "type": "string", "maxLength": 500 }
+  }
+}

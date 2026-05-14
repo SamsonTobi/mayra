@@ -1,0 +1,7 @@
+{
+  "action": "click",
+  "target_ref": "@e3",
+  "value": null,
+  "risk": "low",
+  "reason": "open menu"
+}

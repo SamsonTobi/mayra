@@ -1,0 +1,17 @@
+{
+  "kind": "approval",
+  "message": {
+    "id": "m-appr-2",
+    "kind": "approval_request",
+    "action": {
+      "action": "click",
+      "target_ref": "@e5",
+      "value": null,
+      "risk": "high",
+      "reason": "submit form"
+    },
+    "screenshot_path": "/tmp/mayra/screenshot.png",
+    "expires_at": "2026-05-14T12:35:00Z",
+    "ts": "2026-05-14T12:01:02Z"
+  }
+}

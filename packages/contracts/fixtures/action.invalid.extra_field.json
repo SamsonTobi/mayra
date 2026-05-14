@@ -1,0 +1,8 @@
+{
+  "action": "click",
+  "target_ref": "@e3",
+  "value": null,
+  "risk": "low",
+  "reason": "open menu",
+  "note": "this field is not in the schema"
+}

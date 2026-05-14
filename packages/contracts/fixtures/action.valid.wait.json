@@ -1,0 +1,7 @@
+{
+  "action": "wait",
+  "target_ref": "@e2",
+  "value": null,
+  "risk": "low",
+  "reason": "wait for modal"
+}

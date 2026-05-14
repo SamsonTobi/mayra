@@ -1,0 +1,9 @@
+{
+  "kind": "action",
+  "message": {
+    "id": "x",
+    "kind": "user",
+    "text": "not an action log",
+    "ts": "2026-05-14T12:00:00Z"
+  }
+}

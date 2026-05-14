@@ -1,0 +1,10 @@
+{
+  "kind": "status",
+  "message": {
+    "id": "m-sys-2",
+    "kind": "system_status",
+    "text": "Budget warning.",
+    "severity": "warn",
+    "ts": "2026-05-14T12:01:01Z"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "action": "click",
+  "target_ref": "#submit-btn",
+  "value": null,
+  "risk": "low",
+  "reason": "submit form"
+}

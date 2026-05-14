@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mayra.local/contracts/action.schema.json",
+  "title": "Action",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action", "target_ref", "value", "risk", "reason"],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["click", "type", "scroll", "wait", "navigate"]
+    },
+    "target_ref": {
+      "oneOf": [
+        { "type": "string", "pattern": "^@e[0-9]+$" },
+        { "type": "string", "pattern": "^role:[a-z]+\\[name=[^\\]]+\\]$" },
+        { "type": "string", "pattern": "^text:.{1,200}$" },
+        { "type": "string", "pattern": "^label:.{1,200}$" },
+        { "type": "null" }
+      ]
+    },
+    "value": {
+      "oneOf": [
+        { "type": "string", "maxLength": 2048 },
+        { "type": "null" }
+      ]
+    },
+    "risk": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 280
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "action": { "const": "navigate" } }, "required": ["action"] },
+      "then": {
+        "properties": {
+          "value": { "type": "string", "format": "uri", "maxLength": 2048 }
+        },
+        "required": ["value"]
+      }
+    },
+    {
+      "if": { "properties": { "action": { "const": "type" } }, "required": ["action"] },
+      "then": {
+        "properties": { "value": { "type": "string", "minLength": 1, "maxLength": 2048 } },
+        "required": ["value"]
+      }
+    },
+    {
+      "if": { "properties": { "action": { "const": "click" } }, "required": ["action"] },
+      "then": {
+        "properties": {
+          "target_ref": {
+            "type": "string",
+            "pattern": "^(@e[0-9]+|role:[a-z]+\\[name=[^\\]]+\\]|text:.{1,200}|label:.{1,200})$"
+          }
+        },
+        "required": ["target_ref"]
+      }
+    }
+  ]
+}

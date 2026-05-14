@@ -1,0 +1,7 @@
+{
+  "action": "eval",
+  "target_ref": "@e1",
+  "value": "alert(1)",
+  "risk": "high",
+  "reason": "blocked"
+}

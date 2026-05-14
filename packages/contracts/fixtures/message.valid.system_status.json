@@ -1,0 +1,7 @@
+{
+  "id": "m-sys-1",
+  "kind": "system_status",
+  "text": "Snapshot refreshed.",
+  "severity": "info",
+  "ts": "2026-05-14T12:00:10Z"
+}

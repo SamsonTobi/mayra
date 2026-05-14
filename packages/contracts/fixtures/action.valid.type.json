@@ -1,0 +1,7 @@
+{
+  "action": "type",
+  "target_ref": "@e7",
+  "value": "hello",
+  "risk": "medium",
+  "reason": "fill email field"
+}

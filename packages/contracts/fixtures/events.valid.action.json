@@ -1,0 +1,18 @@
+{
+  "kind": "action",
+  "message": {
+    "id": "m-log-2",
+    "kind": "action_log",
+    "action": {
+      "action": "wait",
+      "target_ref": "@e2",
+      "value": null,
+      "risk": "low",
+      "reason": "modal"
+    },
+    "executed": false,
+    "screenshot_path": null,
+    "step": 2,
+    "ts": "2026-05-14T12:01:00Z"
+  }
+}

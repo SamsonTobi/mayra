@@ -1,0 +1,7 @@
+{
+  "action": "navigate",
+  "target_ref": null,
+  "value": "https://example.com/login",
+  "risk": "medium",
+  "reason": "open login page"
+}

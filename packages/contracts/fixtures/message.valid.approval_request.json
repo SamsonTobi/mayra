@@ -1,0 +1,14 @@
+{
+  "id": "m-appr-1",
+  "kind": "approval_request",
+  "action": {
+    "action": "click",
+    "target_ref": "@e9",
+    "value": null,
+    "risk": "high",
+    "reason": "confirm payment"
+  },
+  "screenshot_path": "C:\\\\Users\\\\demo\\\\Mayra\\\\screenshots\\\\task_1_step_4.png",
+  "expires_at": "2026-05-14T12:30:00Z",
+  "ts": "2026-05-14T12:00:12Z"
+}

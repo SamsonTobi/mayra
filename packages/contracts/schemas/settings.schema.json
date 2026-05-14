@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mayra.local/contracts/settings.schema.json",
+  "title": "SettingsConfig",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["provider", "model", "temperature"],
+  "properties": {
+    "provider": {
+      "type": "string",
+      "enum": ["cloudflare", "gemini", "grok"]
+    },
+    "model": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "temperature": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "fallback_provider": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "enum": ["cloudflare", "gemini", "grok"] }
+      ]
+    },
+    "auto_submit_basic_forms": { "type": "boolean" },
+    "headed": { "type": "boolean" },
+    "step_budget": { "type": "integer", "minimum": 5, "maximum": 80 },
+    "throttle_rpm": { "type": "integer", "minimum": 1, "maximum": 60 }
+  }
+}
