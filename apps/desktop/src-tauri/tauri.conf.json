@@ -30,7 +30,7 @@
         "enable": true,
         "scope": ["$APPLOCALDATA/Mayra/screenshots/**"]
       },
-      "capabilities": ["main-window", "sidecar", "secure-store", "notifications"]
+      "capabilities": ["main-window", "sidecar", "notifications", "chrome-probe"]
     }
   },
   "bundle": {
