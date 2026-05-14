@@ -31,6 +31,23 @@ pub struct SidecarReadyPayload {
     pub token: String,
 }
 
+/// Phase 1 dev: when `MAYRA_SKIP_SIDECAR=1`, emit a synthetic handshake so the UI reaches onboarding
+/// without a packaged `mayra-orchestrator` binary (`port=0` means no orchestrator yet).
+pub fn maybe_emit_dev_skip_sidecar_ready(app: &AppHandle) {
+    if std::env::var("MAYRA_SKIP_SIDECAR").unwrap_or_default() != "1" {
+        return;
+    }
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        let payload = SidecarReadyPayload {
+            port: 0,
+            token: String::new(),
+        };
+        let _ = handle.emit("orchestrator-ready", payload);
+    });
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct OrchestratorFailedPayload {

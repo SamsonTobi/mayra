@@ -12,6 +12,8 @@
     "test:py": "uv run --extra dev --directory apps/orchestrator pytest -m \"not integration\"",
     "test:py:all": "uv run --extra dev --directory apps/orchestrator pytest",
     "test": "npm run test:contracts && npm run test:contracts:py && npm run test:py && npm run test:web",
-    "verify": "npm run contracts:check && npm run test"
+    "verify": "npm run contracts:check && npm run test",
+    "dev:desktop": "npm --prefix apps/desktop run dev",
+    "dev:desktop:sidecar": "npm --prefix apps/desktop run dev:with-sidecar"
   }
 }

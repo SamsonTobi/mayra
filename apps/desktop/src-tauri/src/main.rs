@@ -39,6 +39,10 @@ fn main() {
             mayra_desktop_lib::commands::notify,
             mayra_desktop_lib::commands::os_open_external,
         ])
+        .setup(|app| {
+            mayra_desktop_lib::sidecar::maybe_emit_dev_skip_sidecar_ready(app.handle());
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("error building Mayra desktop application")
         .run(|app_handle, event| {
