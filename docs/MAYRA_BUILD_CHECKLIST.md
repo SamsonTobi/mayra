@@ -10,7 +10,59 @@ Legend: `[x]` done · `[~]` partial / stubbed · `[ ]` todo · `(spec §X)` cros
 
 ---
 
-## Stage T0 — Repo scaffolding
+## Parallel lanes (multi-agent execution)
+
+Several stages can be developed concurrently because they touch disjoint directories. Each lane runs on its own branch (`lane/<id>-<slug>`), rebases onto `main`, opens a PR per stage, and merges fast-forward when green.
+
+| Lane | Owner scope (files this lane is allowed to touch) | Stages | Branch | Status |
+|------|---------------------------------------------------|--------|--------|--------|
+| **A — Orchestrator core** | `apps/orchestrator/mayra_orchestrator/{agent_loop.py,logging_setup.py,api/approval_registry.py,api/routes/**}`; tests under `apps/orchestrator/tests/{unit,contract}/` | T3 (logging), T4 follow-ups, **T5 agent loop** | `lane/a-loop` | unstarted |
+| **B — Browser adapter** | `apps/orchestrator/mayra_orchestrator/browser/**`; `apps/orchestrator/tests/{unit,integration}/test_browser_*.py` | **T7** | `lane/b-browser` | unstarted |
+| **C — Provider clients** | `apps/orchestrator/mayra_orchestrator/providers/{base.py,grok.py,cloudflare.py,factory.py,_retry.py}`; tests `apps/orchestrator/tests/unit/test_*_provider.py` | **T6** (everything except gemini list_models which is done) | `lane/c-providers` | unstarted |
+| **D — Persistence + Supabase** | `apps/orchestrator/mayra_orchestrator/persistence/**`; `supabase/**`; tests `apps/orchestrator/tests/unit/test_repo_*.py`, `tests/integration/test_supabase_*.py` | **T10** | `lane/d-supabase` | unstarted |
+| **E — Tauri desktop** | `apps/desktop/**` (does not exist yet); `scripts/rename-sidecar.mjs` | **T8** | `lane/e-desktop` | unstarted |
+| **F — Next.js UI** | `apps/web/**` (except files already in `src/lib/{orchestrator-client,sse}.*`); `packages/ui/**` if/when created | **T9** | `lane/f-web` | unstarted |
+| **G — Repo / CI / quality** | `.pre-commit-config.yaml`, `.github/workflows/**`, root `package.json` script additions, `turbo.json` task additions, `scripts/release-pipeline.mjs` | T0 leftovers, **T11 CI + packaging** | `lane/g-ci` | unstarted |
+| **H — Bench harness** | `bench/**`, `tests/fixtures/sites/**`, `apps/web/__bench-only__/**` if needed | **T11 bench** | `lane/h-bench` | unstarted |
+
+### Shared files (require coordination)
+
+These files are touched by multiple lanes; a lane MUST limit its diff to a small, additive seam, post the diff in PR description, and rebase before merge:
+
+| File | Touched by | Required pattern |
+|------|------------|------------------|
+| `apps/orchestrator/mayra_orchestrator/api/app.py` | A, B, C, D | Each lane defines `def wire(app: FastAPI) -> None` in its own module and `create_app()` calls them in fixed order. No lane edits route logic of another lane. |
+| `apps/orchestrator/mayra_orchestrator/settings.py` | A, B, C, D, G | Append-only fields, default values; never reorder/rename existing fields. |
+| `apps/orchestrator/pyproject.toml` | A, B, C, D, H | Append to `dependencies`; never remove. Bump `[project.optional-dependencies].dev` only if your tests need it. |
+| `packages/contracts/**` | A, F (consumers) | Schema changes are their own PR; consumers wait for it to merge then `npm run contracts:codegen`. |
+| `docs/MAYRA_BUILD_CHECKLIST.md` | every lane | Each PR flips only the rows that lane finished. Resolve merge conflicts by accepting the union of `[x]` marks. |
+| `uv.lock`, `pnpm-lock.yaml`, `package-lock.json` | every lane | Always commit; on conflict, regenerate then commit. Never hand-edit. |
+
+### Coordination rules
+
+1. **One lane per chat / agent.** Don’t mix lanes in a single working tree.
+2. **Branch off latest `main`.** `git fetch && git switch -c lane/<id>-<slug> origin/main`.
+3. **Tests first.** Every PR includes the failing test commit before the implementation commit (per `.cursor/rules/mayra-small-commits.mdc`).
+4. **Stay inside your scope.** If you need a file outside your scope, open a tiny PR from another lane (or ask the operator) instead of editing it yourself.
+5. **No `git push --force` to `main`.** Lane branches: rebase + force-push to your own branch is fine.
+6. **CI lane (G) goes last per stage.** It’s the only lane that may aggregate cross-lane wiring (e.g. `verify` script picking up new package scripts).
+7. **Lockfile churn**: if `uv sync` or `npm install` adds/removes a package, regenerate the lockfile in the same commit as the dep change.
+8. **Conflict on `app.py`**: never both register the same route prefix. Reserve prefixes: A = `/v1/tasks`, `/v1/chat`, `/v1/actions`, `/v1/sessions`; B = (none — adapter only); C = `/v1/settings`, `/v1/providers`; D = `/v1/logs`.
+
+### Dependency graph
+
+- **A** can start now. Independent of others except contracts (already done).
+- **B** can start now. A’s agent loop will call into B at the end (interface: `BrowserAdapter` Protocol). Until then B exposes `FakeBrowser`-compatible Protocol.
+- **C** can start now. Independent.
+- **D** can start now (table DDL + repos). Wiring into agent loop blocks on A; tests can use direct repo calls.
+- **E** can start now. Sidecar lifecycle integration test blocks on a packaged orchestrator binary (G), but Rust-only tests run today.
+- **F** can start now. UI mocks the orchestrator over fetch/EventSource; no runtime dependency on A.
+- **G** depends on at least one other lane having scripts/tests to wire. CI matrix can scaffold immediately.
+- **H** independent; eval expectations rely on at least one fixture site.
+
+---
+
+## Stage T0 — Repo scaffolding   `[lane: G]`
 
 - [x] Root `package.json` with workspace test scripts (npm-based, pnpm optional)
 - [x] `pnpm-workspace.yaml`
@@ -28,7 +80,7 @@ Legend: `[x]` done · `[~]` partial / stubbed · `[ ]` todo · `(spec §X)` cros
 
 ---
 
-## Stage T1 — `@mayra/contracts` (single source of truth)
+## Stage T1 — `@mayra/contracts` (single source of truth)   `[lane: shared — frozen unless schema change requested]`
 
 ### Schemas
 - [x] `schemas/action.schema.json` (Draft 2020-12, additionalProperties:false; conditional rules for click/type/navigate)
@@ -64,7 +116,7 @@ Legend: `[x]` done · `[~]` partial / stubbed · `[ ]` todo · `(spec §X)` cros
 
 ---
 
-## Stage T2 — Pure Python modules (TDD)
+## Stage T2 — Pure Python modules (TDD)   `[lane: A — follow-ups only, core complete]`
 
 All 12 first-failing tests green: 35 pytest unit tests + 28 contracts vitest tests (+ contracts pytest fixture parity).
 
@@ -88,7 +140,7 @@ All 12 first-failing tests green: 35 pytest unit tests + 28 contracts vitest tes
 
 ---
 
-## Stage T3 — App skeleton (settings, logging, errors, auth)
+## Stage T3 — App skeleton (settings, logging, errors, auth)   `[lane: A]`
 
 - [x] `mayra_orchestrator/settings.py` — pydantic-settings (`MAYRA_*` env vars)
 - [x] `api/correlation.py` — request-scoped `correlation_id`
@@ -108,7 +160,7 @@ All 12 first-failing tests green: 35 pytest unit tests + 28 contracts vitest tes
 
 ---
 
-## Stage T4 — Memory tasks + first contract surface
+## Stage T4 — Memory tasks + first contract surface   `[lane: A]`
 
 - [x] `api/memory_tasks.py` — `MemoryTaskRegistry` (create / abort / approve / message queue)
 - [x] `api/schemas.py` — strict bodies for `tasks`/`message`/`approve`/`validate`/`logs`
@@ -123,7 +175,7 @@ All 12 first-failing tests green: 35 pytest unit tests + 28 contracts vitest tes
 
 ---
 
-## Stage T5 — Agent loop (the core)
+## Stage T5 — Agent loop (the core)   `[lane: A]`
 
 Five paths must each have a failing contract test **before** the loop body is written (§B.7):
 
@@ -155,7 +207,7 @@ Five paths must each have a failing contract test **before** the loop body is wr
 
 ---
 
-## Stage T6 — Provider HTTP adapters
+## Stage T6 — Provider HTTP adapters   `[lane: C]`
 
 - [x] `providers/gemini.py` — `gemini_list_models(client, api_key)` health probe
 - [x] 4 respx tests (200, 401, 429, 503)
@@ -174,7 +226,7 @@ Five paths must each have a failing contract test **before** the loop body is wr
 
 ---
 
-## Stage T7 — `agent-browser` adapter
+## Stage T7 — `agent-browser` adapter   `[lane: B]`
 
 - [ ] `browser/adapter.py` — `AgentBrowserAdapter` (`doctor`, `open`, `snapshot`, `screenshot_annotated`, `execute`, `close_all`)
 - [ ] `browser/policies/mayra-default.json` — deny `eval/download/upload/clipboard/cookies/storage/network.route/addinitscript`
@@ -191,7 +243,7 @@ Five paths must each have a failing contract test **before** the loop body is wr
 
 ---
 
-## Stage T8 — Tauri shell (`apps/desktop`)
+## Stage T8 — Tauri shell (`apps/desktop`)   `[lane: E]`
 
 > Whole `apps/desktop/` directory does not exist yet — all rows below are todos.
 
@@ -240,7 +292,7 @@ Five paths must each have a failing contract test **before** the loop body is wr
 
 ---
 
-## Stage T9 — Next.js UI (`apps/web`)
+## Stage T9 — Next.js UI (`apps/web`)   `[lane: F]`
 
 ### Done
 - [x] `lib/orchestrator-client.ts` (`createTask`, `abort`, `postTaskMessage`)
@@ -287,7 +339,7 @@ Five paths must each have a failing contract test **before** the loop body is wr
 
 ---
 
-## Stage T10 — Supabase
+## Stage T10 — Supabase   `[lane: D]`
 
 - [ ] `supabase/config.toml`
 - [ ] `supabase/migrations/0001_init.sql` — sessions, tasks, steps, actions, screenshots, evaluations (spec §8.1)
@@ -304,7 +356,7 @@ Five paths must each have a failing contract test **before** the loop body is wr
 
 ---
 
-## Stage T11 — Benchmarks, packaging, release
+## Stage T11 — Benchmarks, packaging, release   `[bench → lane H, packaging+CI → lane G]`
 
 ### Bench
 - [ ] `bench/runner.py` (spec §13.2) — runs YAML specs, writes to `evaluations`
@@ -400,19 +452,21 @@ Not started: `apps/desktop/`, `supabase/`, `bench/`, `scripts/`, `agent-browser`
 
 ## How to use this list
 
-1. Open this file.
-2. Find the topmost `[ ]` row in the lowest unfinished stage.
-3. Write the failing test first (`tests/unit/test_<unit>.py` or `tests/contract/...`).
-4. Run `npm run test` — confirm new test fails for the right reason.
-5. Implement minimum code to pass.
-6. Re-run; confirm green.
-7. Edit this file, change `[ ]` → `[x]`, commit:
-   - `test: <unit> — red`
-   - `feat: <unit> — green`
-   - `refactor: <unit>` (optional)
+1. Pick a **lane** from the *Parallel lanes* table that nobody else is on.
+2. `git fetch && git switch -c lane/<id>-<slug> origin/main`.
+3. Open this file. Find the topmost `[ ]` row inside any stage tagged with your lane.
+4. Write the failing test first (`tests/unit/test_<unit>.py` or `tests/contract/...`).
+5. Run `npm run test` — confirm the new test fails for the right reason.
+6. Implement minimum code to pass; stay inside your lane’s file scope (see the *Owner scope* column).
+7. Re-run; confirm green.
+8. Flip `[ ]` → `[x]` in this file, commit in the small-commit style:
+   - `test(<lane>): <unit> — red`
+   - `feat(<lane>): <unit> — green`
+   - `refactor(<lane>): <unit>` (optional)
    - `docs: tick <unit> in build checklist`
+9. Open a PR for your branch when the stage (or a coherent slice) is complete.
 
-Stay strictly in stage order **unless** a later item unblocks a fast win (e.g. a Tauri test before the loop).
+If your lane is blocked by a shared file (see *Shared files* table), pause and either (a) open a small targeted PR from a different lane to unblock, or (b) escalate to the operator.
 
 ---
 
