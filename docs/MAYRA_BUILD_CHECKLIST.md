@@ -245,11 +245,11 @@ Five paths must each have a failing contract test **before** the loop body is wr
 
 ## Stage T8 — Tauri shell (`apps/desktop`)   `[lane: E]`
 
-> Whole `apps/desktop/` directory does not exist yet — all rows below are todos.
+> `@mayra/desktop` package + `src-tauri` Rust helpers landed; full Tauri app, capabilities, and commands still todo.
 
 ### Project setup
 - [x] `apps/desktop/package.json` (only `scripts.tauri = "tauri"` + dev deps)
-- [ ] `apps/desktop/src-tauri/Cargo.toml`, `Cargo.lock`
+- [~] `apps/desktop/src-tauri/Cargo.toml`, `Cargo.lock` — `Cargo.toml` + tests in `src/lib.rs`; commit `Cargo.lock` after `cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml` where Rust is installed (sandbox had no `cargo`).
 - [ ] `tauri.conf.json` per spec §2.1 (NSIS, embedBootstrapper, currentUser, updater inactive)
 - [ ] CSP: `default-src 'self'`, `connect-src 'self' http://127.0.0.1:* https://*.supabase.co`, `img-src 'self' data: asset: https://*.supabase.co`
 - [ ] `app.security.assetProtocol.scope = ["$APPLOCALDATA/Mayra/screenshots/**"]` (spec §C.3)
@@ -272,7 +272,7 @@ Five paths must each have a failing contract test **before** the loop body is wr
 - [ ] `os_open_external(url)` — allowlist `https://*.supabase.co`
 
 ### Sidecar lifecycle (`sidecar.rs`, spec §2.4)
-- [ ] Free-port allocator + 48-byte random token
+- [~] Free-port allocator + 48-byte random token — pure helpers `pick_unused_loopback_port`, `generate_sidecar_token` in `src-tauri/src/lib.rs`; shell wiring todo
 - [ ] Spawn orchestrator with env (provider keys b64, data dir, Supabase vars)
 - [ ] Health-poll `/healthz` 200 ms × 50 → emit `orchestrator-ready { port, token }`
 - [ ] Backoff restart on crash (1, 2, 4, 8 s) → `orchestrator-failed`
@@ -285,10 +285,10 @@ Five paths must each have a failing contract test **before** the loop body is wr
 - [ ] `tauri-plugin-notification` for OTP / retention warnings
 
 ### Rust tests (`cargo test`)
-- [ ] `picks_an_unused_loopback_port_and_releases_it`
-- [ ] `generates_token_of_length_48_url_safe`
-- [ ] `roundtrip_device_id_via_keyring` (mock backend)
-- [ ] `disallows_unregistered_sidecar_argument` (parse capability JSON, assert validators)
+- [x] `picks_an_unused_loopback_port_and_releases_it`
+- [x] `generates_token_of_length_48_url_safe`
+- [x] `roundtrip_device_id_via_keyring` (mock backend)
+- [x] `disallows_unregistered_sidecar_argument` (parse capability JSON, assert validators)
 
 ---
 
@@ -408,7 +408,7 @@ Five paths must each have a failing contract test **before** the loop body is wr
 - [x] §B.2 — 11 contract tests green (httpx ASGITransport)
 - [~] §B.3 — 4 integration files exist, all `pytest.skip` until stage T7 lands
 - [~] §B.4 — 3 web tests green (orchestrator-client × 3, sse × 2); 5 RTL tests still pending
-- [ ] §B.5 — 4 Rust tests
+- [~] §B.5 — 4 Rust tests in `apps/desktop/src-tauri/src/lib.rs` — run `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`; add committed `Cargo.lock` when generated locally
 - [ ] §B.6 — coverage gates wired (Python ≥ 85 % branch, TS ≥ 80 %, Rust ≥ 70 %)
 
 ---

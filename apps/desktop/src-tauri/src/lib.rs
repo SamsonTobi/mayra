@@ -2,18 +2,22 @@
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use rand::rngs::OsRng;
+use rand::RngCore;
 
 /// Binds `127.0.0.1:0`, reads the assigned port, then drops the listener so the port is released.
 pub fn pick_unused_loopback_port() -> std::io::Result<u16> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "not implemented",
-    ))
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    Ok(port)
 }
 
 /// 48 random bytes, encoded as URL-safe base64 without padding (spec §2.4).
 pub fn generate_sidecar_token() -> String {
-    String::new()
+    let mut bytes = [0u8; 48];
+    OsRng.fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
 }
 
 #[cfg(test)]
