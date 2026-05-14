@@ -1,5 +1,6 @@
 //! IPC surface (spec §2.3) — OS-facing commands only.
 
+use crate::chrome_probe::ChromeSession;
 use crate::sidecar::{SidecarReadyPayload, SidecarState};
 use tauri::{command, AppHandle, Manager, State};
 
@@ -85,6 +86,11 @@ pub async fn notify(app: AppHandle, title: String, body: String) -> Result<(), S
         .body(body)
         .show()
         .map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn probe_chrome_ports(ports: Vec<u16>) -> Result<Vec<ChromeSession>, String> {
+    Ok(crate::chrome_probe::probe_chrome_ports(ports).await)
 }
 
 #[command]

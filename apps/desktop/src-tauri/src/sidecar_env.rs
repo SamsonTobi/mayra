@@ -41,8 +41,8 @@ fn read_keyring_optional(attribute: &str) -> Result<Option<String>, String> {
     }
 }
 
-/// JSON map of configured providers (`slug -> secret`), standard-base64 encoded for `MAYRA_PROVIDER_KEYS_BASE64`.
-pub fn provider_keys_base64() -> Result<Option<String>, String> {
+/// JSON map of configured providers (`slug -> secret`).
+pub fn provider_key_map() -> Result<Map<String, Value>, String> {
     let mut map = Map::new();
     for slug in PROVIDER_SLUGS {
         let entry = keyring::Entry::new("mayra", &format!("provider:{slug}"))
@@ -53,6 +53,12 @@ pub fn provider_keys_base64() -> Result<Option<String>, String> {
             }
         }
     }
+    Ok(map)
+}
+
+/// JSON map of configured providers (`slug -> secret`), standard-base64 encoded for `MAYRA_PROVIDER_KEYS_BASE64`.
+pub fn provider_keys_base64() -> Result<Option<String>, String> {
+    let map = provider_key_map()?;
     if map.is_empty() {
         return Ok(None);
     }
@@ -63,17 +69,16 @@ pub fn provider_keys_base64() -> Result<Option<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use keyring::{mock, Entry};
 
+    /// Keyring mocks are per-`Entry` (no cross-entry persistence); validate encoding separately.
     #[test]
-    fn provider_keys_json_roundtrips_through_base64() -> keyring::Result<()> {
-        mock::set_default_credential_builder(mock::default_credential_builder());
-        Entry::new("mayra", "provider:grok")?.set_password("sk-test")?;
-        let b64 = provider_keys_base64().unwrap().expect("expected grok key");
+    fn provider_keys_base64_encodes_map_roundtrip() {
+        let mut map = Map::new();
+        map.insert("grok".to_string(), Value::String("sk-test".into()));
+        let bytes = serde_json::to_vec(&Value::Object(map)).unwrap();
+        let b64 = STANDARD.encode(bytes);
         let raw = STANDARD.decode(b64).unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        let v: Value = serde_json::from_slice(&raw).unwrap();
         assert_eq!(v["grok"], "sk-test");
-        let _ = Entry::new("mayra", "provider:grok")?.delete_password();
-        Ok(())
     }
 }

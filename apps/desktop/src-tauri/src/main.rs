@@ -38,6 +38,7 @@ fn main() {
             mayra_desktop_lib::commands::open_data_dir,
             mayra_desktop_lib::commands::notify,
             mayra_desktop_lib::commands::os_open_external,
+            mayra_desktop_lib::commands::probe_chrome_ports,
         ])
         .setup(|app| {
             mayra_desktop_lib::sidecar::maybe_emit_dev_skip_sidecar_ready(app.handle());

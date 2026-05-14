@@ -1,5 +1,6 @@
 //! Mayra desktop Rust library: IPC commands, sidecar runtime, and pure helpers.
 
+pub mod chrome_probe;
 pub mod commands;
 pub mod sidecar;
 pub mod sidecar_env;
@@ -58,9 +59,9 @@ mod keyring_tests {
 
     #[test]
     fn roundtrip_device_id_via_keyring() -> keyring::Result<()> {
-        mock::set_default_credential_builder(mock::default_credential_builder());
+        keyring::set_default_credential_builder(mock::default_credential_builder());
         let entry = Entry::new("mayra", "device_id")?;
-        let _ = entry.delete_password();
+        let _ = entry.delete_credential();
         entry.set_password("device-roundtrip-test-id")?;
         assert_eq!(entry.get_password()?, "device-roundtrip-test-id");
         Ok(())
