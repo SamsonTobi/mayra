@@ -94,6 +94,15 @@ pub async fn probe_chrome_ports(ports: Vec<u16>) -> Result<Vec<ChromeSession>, S
 }
 
 #[command]
+pub fn launch_chromium_remote_debug(
+    app: AppHandle,
+    browser: String,
+    port: u16,
+) -> Result<(), String> {
+    crate::chromium_launch::launch_chromium_remote_debug(&app, &browser, port)
+}
+
+#[command]
 pub fn os_open_external(url: String) -> Result<(), String> {
     let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
     if parsed.scheme() != "https" {

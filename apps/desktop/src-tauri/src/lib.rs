@@ -1,6 +1,7 @@
 //! Mayra desktop Rust library: IPC commands, sidecar runtime, and pure helpers.
 
 pub mod chrome_probe;
+pub mod chromium_launch;
 pub mod commands;
 pub mod sidecar;
 pub mod sidecar_env;

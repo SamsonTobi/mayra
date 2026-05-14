@@ -39,6 +39,7 @@ fn main() {
             mayra_desktop_lib::commands::notify,
             mayra_desktop_lib::commands::os_open_external,
             mayra_desktop_lib::commands::probe_chrome_ports,
+            mayra_desktop_lib::commands::launch_chromium_remote_debug,
         ])
         .setup(|app| {
             mayra_desktop_lib::sidecar::maybe_emit_dev_skip_sidecar_ready(app.handle());

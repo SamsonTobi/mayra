@@ -1,14 +1,19 @@
-//! Discover Chrome DevTools (CDP) endpoints on loopback (MAYRA_BUILD_CHECKLIST Phase 2).
+//! Discover Chromium DevTools HTTP endpoints on loopback (MAYRA_BUILD_CHECKLIST Phase 2).
 //!
-//! Hits each port's `/json/version` and `/json` with a short timeout, matching DevTools HTTP API.
+//! Chrome, Edge, Brave, etc. expose the same `/json` API on `--remote-debugging-port`.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-const TIMEOUT: Duration = Duration::from_millis(200);
+/// Per-request timeout (connect + response). 200 ms was too tight on Windows right after process start.
+const TIMEOUT: Duration = Duration::from_millis(1500);
 
-/// One Chrome instance responding on a remote-debugging port.
+const RETRIES: u32 = 3;
+const RETRY_DELAY: Duration = Duration::from_millis(250);
+
+/// One Chromium-based browser responding on a remote-debugging port.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChromeSession {
@@ -55,23 +60,72 @@ fn probe_client() -> Result<reqwest::Client, reqwest::Error> {
         .build()
 }
 
-/// Probes `http://127.0.0.1:<port>` for each port; returns only ports that speak the DevTools HTTP API.
+/// Probes `http://127.0.0.1:<port>` (and `localhost`) for each port; returns only ports that speak the DevTools HTTP API.
 pub async fn probe_chrome_ports(ports: Vec<u16>) -> Vec<ChromeSession> {
     let Ok(client) = probe_client() else {
         return Vec::new();
     };
+    let client = Arc::new(client);
 
-    let mut out = Vec::new();
-    for port in ports {
-        if let Some(session) = probe_one(&client, port).await {
-            out.push(session);
+    let handles: Vec<_> = ports
+        .into_iter()
+        .map(|port| {
+            let c = Arc::clone(&client);
+            tokio::spawn(async move { probe_one_with_retries(&c, port).await })
+        })
+        .collect();
+
+    let mut out: Vec<ChromeSession> = Vec::new();
+    for h in handles {
+        if let Ok(Some(s)) = h.await {
+            out.push(s);
         }
     }
+    out.sort_by_key(|s| s.port);
     out
 }
 
+async fn probe_one_with_retries(client: &reqwest::Client, port: u16) -> Option<ChromeSession> {
+    for attempt in 0..RETRIES {
+        if attempt > 0 {
+            tokio::time::sleep(RETRY_DELAY).await;
+        }
+        if let Some(s) = probe_one(client, port).await {
+            return Some(s);
+        }
+    }
+    None
+}
+
+const LOOPBACK_HOSTS: &[&str] = &["127.0.0.1", "localhost"];
+
 async fn probe_one(client: &reqwest::Client, port: u16) -> Option<ChromeSession> {
-    let base = format!("http://127.0.0.1:{port}");
+    for host in LOOPBACK_HOSTS {
+        if let Some(s) = probe_one_host(client, port, host).await {
+            return Some(s);
+        }
+    }
+    None
+}
+
+fn is_page_target(t: &TargetBody) -> bool {
+    if t.target_type == "page" {
+        return true;
+    }
+    if t.target_type.is_empty()
+        && t.web_socket_debugger_url.contains("/devtools/page")
+    {
+        return true;
+    }
+    false
+}
+
+async fn probe_one_host(
+    client: &reqwest::Client,
+    port: u16,
+    host: &str,
+) -> Option<ChromeSession> {
+    let base = format!("http://{host}:{port}");
     let version_url = format!("{base}/json/version");
 
     let v: VersionBody = client.get(&version_url).send().await.ok()?.json().await.ok()?;
@@ -84,7 +138,7 @@ async fn probe_one(client: &reqwest::Client, port: u16) -> Option<ChromeSession>
 
     let tabs: Vec<ChromeTab> = targets
         .into_iter()
-        .filter(|t| t.target_type == "page")
+        .filter(is_page_target)
         .map(|t| ChromeTab {
             title: t.title,
             url: t.url,
