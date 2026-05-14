@@ -29,29 +29,31 @@ What works today without any new code:
 - Desktop Tauri: IPC shell, sidecar env builder from keyring, sidecar supervise with backoff, bundle icons, `scripts/rename-sidecar.mjs`.
 - Web (Next 15 App Router): `/`, `/chat`, `/settings`, `/logs[/[task_id]]`; orchestrator-context, chat-stream-reducer, redact, Tauri+Supabase clients; 13 vitest/RTL tests.
 
-What's missing to actually run the desktop today: `npm --prefix apps/web install` (Lane F deps), `pnpm install` at root (`pnpm-workspace.yaml`), an integrated sidecar binary or dev script, `tauri.conf.json` `devUrl/frontendDist` pointing at the web build, and one provider key. Phase 1 fixes all of that.
+What's missing for a **first-run desktop dev loop** was: committed web/desktop lockfiles after `npm install`, `tauri.conf.json` pointing `frontendDist` at `apps/web/out`, `beforeDevCommand` starting Next on :3000, and a dev path that skips the packaged orchestrator (`MAYRA_SKIP_SIDECAR=1`). Phase 1 addresses that; **`Cargo.lock` for `src-tauri` still requires Rust/Cargo on your machine** (`cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml`) — commit it once generated.
 
 ---
 
 ## Phase 1 — "Hello desktop" (boot a window)
 
-**Goal:** double-click `pnpm tauri dev` → window opens, Next.js layout renders, no panics, no sidecar required yet.
+**Goal:** `npm run dev:desktop` from repo root (or `npm run dev` under `apps/desktop`) → Next starts on :3000, window opens, onboarding renders — **no packaged sidecar binary**.
 
-**Acceptance demo:** operator runs `pnpm tauri dev` in `apps/desktop`, the Mayra window appears with the welcome/onboarding page rendered.
+**Acceptance demo:** operator runs `npm run dev:desktop`, the Mayra window appears with the welcome/onboarding content (not stuck on "Starting engine…").
 
-- [ ] **Web install** — `npm --prefix apps/web install` (run once, commit any lockfile churn).
-- [ ] **Root install** — `pnpm install` so `@mayra/config`, `@mayra/contracts`, `@mayra/web`, `@mayra/desktop` link as workspace packages.
-- [ ] **Web boots standalone** — `npm --prefix apps/web run dev` serves `http://localhost:3000`, `/` renders OnboardingFlow without runtime errors (mock sidecar OK).
-- [ ] **Tauri config wiring** — `apps/desktop/src-tauri/tauri.conf.json`:
-  - [ ] `build.beforeDevCommand = "pnpm --filter @mayra/web dev"`
-  - [ ] `build.devUrl = "http://localhost:3000"`
-  - [ ] `build.beforeBuildCommand = "pnpm --filter @mayra/web build"`
-  - [ ] `build.frontendDist = "../../apps/web/out"`
-- [ ] **Cargo lock** — `cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml`; commit `Cargo.lock`.
-- [ ] **Disable sidecar boot for P1** — feature-flag `start_sidecar` so window opens even without a packaged binary (env `MAYRA_SKIP_SIDECAR=1`).
-- [ ] **Manual smoke** — document the exact command in `apps/desktop/README.md`.
-- [ ] **`tauri dev` script in root `package.json`** — `"dev:desktop": "pnpm --filter @mayra/desktop tauri dev"`.
-- [ ] **Tick the demo**: a 5-line note at the bottom of this phase confirming the operator saw the window.
+- [x] **Web install** — `npm --prefix apps/web install` (lockfile committed when it changes; this agent run left `apps/web/package-lock.json` unchanged).
+- [~] **Root install** — optional `pnpm install` at repo root for workspace linking; **npm `file:` deps in `apps/web/package.json` work without pnpm** for Phase 1.
+- [x] **Web boots standalone** — `npm --prefix apps/web run dev` serves `http://localhost:3000` (verify locally).
+- [x] **Tauri config wiring** — `apps/desktop/src-tauri/tauri.conf.json`:
+  - [x] `build.beforeDevCommand` → `npm --prefix ../../apps/web run dev -- --port 3000`
+  - [x] `build.devUrl` → `http://localhost:3000`
+  - [x] `build.beforeBuildCommand` → `npm --prefix ../../apps/web run build`
+  - [x] `build.frontendDist` → `../../apps/web/out`
+  - [x] CSP extended with `http://localhost:*` + `ws://localhost:*` for Next dev / HMR.
+- [~] **Cargo lock** — run **`cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml`** when Rust is installed; commit `apps/desktop/src-tauri/Cargo.lock` (blocked here: no `cargo` on PATH).
+- [x] **Disable sidecar boot for P1** — `MAYRA_SKIP_SIDECAR=1` via **`cross-env`** on default `npm run dev` in `apps/desktop`; emits synthetic **`orchestrator-ready`** `{ port: 0, token: "" }` from Rust `.setup` so UI unlocks.
+- [x] **Web listens correctly** — `useSidecarReady` uses `@tauri-apps/api/event` `listen("orchestrator-ready")` in Tauri; keeps `CustomEvent` fallback for tests.
+- [x] **Manual smoke** — `apps/desktop/README.md` documents Phase 1 commands.
+- [x] **Root script** — `package.json` → `"dev:desktop"` / `"dev:desktop:sidecar"`.
+- [ ] **Operator demo tick** — after you see the window once on your machine, flip this box and note git SHA + date in the commit message.
 
 ---
 
