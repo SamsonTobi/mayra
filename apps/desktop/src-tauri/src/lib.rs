@@ -2,6 +2,7 @@
 
 pub mod commands;
 pub mod sidecar;
+pub mod sidecar_env;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
