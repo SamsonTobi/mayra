@@ -15,6 +15,7 @@ from mayra_orchestrator.api.memory_tasks import MemoryTaskRegistry
 from mayra_orchestrator.api.routes.sessions import SessionBucket
 from mayra_orchestrator.api.routes.wire import wire_routes
 from mayra_orchestrator.browser.adapter import AgentBrowserAdapter
+from mayra_orchestrator.providers.factory import build_provider_runtime
 from mayra_orchestrator.settings import AppSettings
 
 
@@ -111,6 +112,12 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.state.ui_logs = []
     app.state.browser = _StubBrowser()
     app.state.model_client = _DefaultModelClient()
+    provider_runtime = build_provider_runtime(settings)
+    app.state.providers = provider_runtime.clients
+    app.state.rate_limit = provider_runtime.rate_limit
+    app.state.semaphore = provider_runtime.semaphore
+    if "gemini" in provider_runtime.clients:
+        app.state.model_client = provider_runtime.clients["gemini"]
     app.state.browser_sessions = SessionBucket()
     app.state.session_browser = AgentBrowserAdapter(data_dir=settings.data_dir)
 

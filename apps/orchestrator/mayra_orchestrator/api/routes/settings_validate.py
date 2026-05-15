@@ -14,8 +14,9 @@ router = APIRouter(prefix="/v1/settings", tags=["settings"], dependencies=[Depen
 
 @router.post("/validate", response_model=ValidateSettingsResponse)
 async def validate_settings(request: Request, body: ValidateSettingsRequest) -> ValidateSettingsResponse:
-    _ = body
     t0 = time.perf_counter()
-    await request.app.state.model_client.health_check()
+    providers = getattr(request.app.state, "providers", {})
+    client = providers.get(body.provider, request.app.state.model_client)
+    await client.health_check()
     ms = int((time.perf_counter() - t0) * 1000)
     return ValidateSettingsResponse(ok=True, latency_ms=max(ms, 1))

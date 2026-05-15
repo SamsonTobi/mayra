@@ -14,3 +14,6 @@ class AppSettings(BaseSettings):
     include_contract_routes: bool = False
     default_owner_id: str = Field(default="local")
     data_dir: Path = Field(default_factory=lambda: Path.home() / ".mayra")
+    provider_keys_base64: str | None = None
+    default_model: str = "gemini-2.5-flash"
+    default_throttle_rpm: int = Field(default=10, ge=1, le=600)

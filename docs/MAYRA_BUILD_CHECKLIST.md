@@ -116,8 +116,8 @@ What's missing for a **first-run desktop dev loop** was: committed web/desktop l
 **Acceptance demo:** on a local fixture HTML page (`tests/fixtures/sites/login.html`) the agent clicks `#sign-in` and reports success within 10 s.
 
 - [x] **Provider key flow** — Settings UI calls `save_provider_key("gemini", key)` → keyring → sidecar restart with `MAYRA_PROVIDER_KEYS_BASE64`.
-- [ ] **`providers/base.py`** — `ModelClient` Protocol; **`providers/gemini.py`** — full `complete_streaming(prompt, on_token)` with vision + `inline_data` for WebP.
-- [ ] **Provider factory** `providers/factory.py` — one `httpx.AsyncClient` per provider in lifespan.
+- [x] **`providers/base.py`** — `ModelClient` Protocol; **`providers/gemini.py`** — full `complete_streaming(prompt, on_token)` with vision + `inline_data` for WebP.
+- [x] **Provider factory** `providers/factory.py` — one `httpx.AsyncClient` per provider in lifespan.
 - [ ] **Agent loop integration** — `run_agent_loop` consumes `ModelClient`, calls `parse_chat_and_action`, executes via `BrowserAdapter`, emits SSE events into the task queue.
 - [ ] **Browser adapter `execute(Action)`** — maps to `click` / `fill` / `wait` / `navigate` (per spec §A.10).
 - [ ] **Five contract paths** (spec §B.7 — all five required for green) — re-run the existing contract tests after wiring real providers:
@@ -127,7 +127,7 @@ What's missing for a **first-run desktop dev loop** was: committed web/desktop l
   - [ ] Budget exhausted
   - [ ] Repair-then-fail
 - [ ] **Fixture site** `tests/fixtures/sites/login.html` (static, no JS frameworks).
-- [ ] **Throttle** `aiolimiter.AsyncLimiter(10, 60)` per provider.
+- [x] **Throttle** `aiolimiter.AsyncLimiter(10, 60)` per provider.
 
 ---
 
