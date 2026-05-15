@@ -89,6 +89,24 @@ pub async fn notify(app: AppHandle, title: String, body: String) -> Result<(), S
 }
 
 #[command]
+pub fn asset_url(app: AppHandle, path: String) -> Result<String, String> {
+    use std::path::PathBuf;
+    let p = PathBuf::from(path.trim());
+    let canon = p.canonicalize().map_err(|e| e.to_string())?;
+    let base = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("Mayra")
+        .join("screenshots");
+    let base_canon = base.canonicalize().unwrap_or(base);
+    if !canon.starts_with(&base_canon) {
+        return Err("path is outside app Mayra/screenshots directory".into());
+    }
+    Ok(canon.to_string_lossy().into_owned())
+}
+
+#[command]
 pub async fn probe_chrome_ports(ports: Vec<u16>) -> Result<Vec<ChromeSession>, String> {
     Ok(crate::chrome_probe::probe_chrome_ports(ports).await)
 }

@@ -25,18 +25,32 @@ export function ChatWindow() {
     return null;
   }, [messages]);
 
-  const startTask = useCallback(
-    async (goal: string) => {
+  const onSend = useCallback(
+    async (text: string) => {
       if (!client) return;
-      const res = await client.createTask({
-        goal,
-        allowed_domains: ["example.com"],
-      });
-      setTaskId(res.task_id);
-      start(res.task_id);
+      if (taskId && !done) {
+        await client.postTaskMessage(taskId, text);
+      } else {
+        const res = await client.createTask({
+          goal: text,
+          allowed_domains: ["example.com"],
+        });
+        setTaskId(res.task_id);
+        start(res.task_id);
+      }
     },
-    [client, start],
+    [client, taskId, done, start],
   );
+
+  const onInjectApproval = useCallback(async () => {
+    if (!client || !taskId) return;
+    await fetch(`http://127.0.0.1:${port}/v1/tasks/${taskId}/inject_approval`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  }, [client, taskId, port, token]);
 
   const onAbort = useCallback(async () => {
     if (!client || !taskId) return;
@@ -53,12 +67,17 @@ export function ChatWindow() {
       <p className="muted">
         Streams from <code>/v1/chat/stream</code> (MAYRA_TECHNICAL_SPEC §3.4).
       </p>
-      <div className="row">
+      <div className="row" style={{ gap: "1rem", marginBottom: "1rem" }}>
         <AbortButton taskId={taskId} disabled={!taskId || done} onAbort={onAbort} />
+        {taskId && !done && (
+          <button type="button" className="btn" onClick={onInjectApproval}>
+            Inject Approval (Dev)
+          </button>
+        )}
       </div>
       <MessageList messages={messages} port={port} token={token} />
       {streamingAssistant ? <TypingIndicator /> : null}
-      <Composer onSend={(t) => void startTask(t)} disabled={!client} />
+      <Composer onSend={onSend} disabled={!client} />
       <LivePreviewPanel screenshotPath={lastShot} />
     </section>
   );

@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import io
 from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from PIL import Image
 
 from mayra_orchestrator.api.app import create_app
 from mayra_orchestrator.settings import AppSettings
@@ -18,8 +20,10 @@ _DEFAULT_CONTRACT_REPLY = (
 
 
 @pytest.fixture
-def app_settings() -> AppSettings:
-    return AppSettings(token="contract-test-token", include_contract_routes=True)
+def app_settings(tmp_path) -> AppSettings:
+    data = tmp_path / "mayra-data"
+    data.mkdir()
+    return AppSettings(token="contract-test-token", include_contract_routes=True, data_dir=data)
 
 
 @pytest.fixture
@@ -27,7 +31,41 @@ def app(app_settings: AppSettings):
     application = create_app(app_settings)
     application.state.browser = FakeBrowser()
     application.state.model_client = FakeModelClient(scripted_replies=[_DEFAULT_CONTRACT_REPLY])
+    application.state.session_browser = FakeSessionBrowser()
     return application
+
+
+class FakeSessionBrowser:
+    """CDP/session adapter fake (no real agent-browser)."""
+
+    def __init__(self) -> None:
+        self.opened: list[tuple[int, str]] = []
+        self._ports: dict[str, int] = {}
+
+    async def run_doctor(self) -> dict[str, Any]:
+        return {"ok": True, "fake": True}
+
+    async def open(self, cdp_port: int, session_id: str) -> None:
+        self.opened.append((cdp_port, session_id))
+        self._ports[session_id] = cdp_port
+
+    async def snapshot(self, session_id: str) -> dict[str, Any]:
+        _ = session_id
+        n = 247
+        return {
+            "success": True,
+            "data": {"refs": {f"e{i}": {"role": "generic"} for i in range(n)}},
+        }
+
+    async def screenshot_png_bytes(self, session_id: str) -> bytes:
+        _ = session_id
+        buf = io.BytesIO()
+        Image.new("RGB", (4, 4), color=(10, 20, 30)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    async def close_all(self) -> None:
+        self._ports.clear()
+        self.opened.clear()
 
 
 @pytest.fixture

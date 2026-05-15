@@ -51,3 +51,24 @@ class UILogRequest(StrictModel):
 
 class UILogResponse(StrictModel):
     ok: bool
+
+
+class SessionConnectRequest(StrictModel):
+    port: int = Field(ge=1, le=65535)
+
+
+class SessionConnectResponse(StrictModel):
+    session_id: str
+
+
+class SessionSummary(StrictModel):
+    session_id: str
+    cdp_port: int
+    last_node_count: int | None = None
+
+
+class SessionSnapshotResponse(StrictModel):
+    node_count: int
+    screenshot_path: str
+
+

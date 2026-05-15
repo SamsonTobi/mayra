@@ -38,6 +38,7 @@ fn main() {
             mayra_desktop_lib::commands::open_data_dir,
             mayra_desktop_lib::commands::notify,
             mayra_desktop_lib::commands::os_open_external,
+            mayra_desktop_lib::commands::asset_url,
             mayra_desktop_lib::commands::probe_chrome_ports,
             mayra_desktop_lib::commands::launch_chromium_remote_debug,
         ])

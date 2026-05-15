@@ -81,16 +81,16 @@ What's missing for a **first-run desktop dev loop** was: committed web/desktop l
 
 **Acceptance demo:** pick tab → within 2 s the LivePreviewPanel shows the page screenshot and "247 nodes" beside it.
 
-- [ ] **Sidecar packaging (dev)** — `scripts/dev-orchestrator.mjs` runs `uv run --directory apps/orchestrator python -m mayra_orchestrator --port=auto`; Tauri spawns it instead of the absent PyInstaller binary.
-- [ ] **Sidecar lifecycle in `start_sidecar`** — spawn → poll `/healthz` → emit `orchestrator-ready { port, token }` (already partly wired; finish it).
-- [ ] **Orchestrator** `POST /v1/sessions/connect { port }` → calls `agent-browser open --cdp <port> --session <session_id> --json`; returns `{ session_id }`.
-- [ ] **Orchestrator** `POST /v1/sessions/{id}/snapshot` → calls `agent-browser snapshot --session <session_id> --json --max-output 20000`; stores `last_snapshot` in memory; returns `{ node_count, screenshot_path }`.
-- [ ] **Browser adapter v1** in `mayra_orchestrator/browser/adapter.py` (only `open`, `snapshot`, `screenshot_annotated`, `close_all` for this phase).
-- [ ] **Screenshot save** — `MAYRA_DATA_DIR/screenshots/<session_id>/<step>-snapshot.webp`; recompress with Pillow (≤1280 px, q75).
-- [ ] **Tauri command** `asset_url(path)` returns `convertFileSrc`-compatible URL.
-- [ ] **Web** new route `/sessions` listing connected sessions + a "Snapshot" button → calls orchestrator, shows screenshot via `LivePreviewPanel`.
-- [ ] **agent-browser doctor** — orchestrator runs `agent-browser doctor --json` on startup; UI banner if missing.
-- [ ] **Integration test** un-skip `tests/integration/test_agent_browser_skips.py::test_open_and_snapshot` once binary installed.
+- [x] **Sidecar packaging (dev)** — `scripts/dev-orchestrator.mjs` runs `uv run --directory apps/orchestrator python -m mayra_orchestrator` with `--port` / `--token` / `--data-dir`; Tauri spawns it via `MAYRA_ORCHESTRATOR_DEV=1` when the packaged sidecar is missing. `scripts/ensure-sidecar-placeholder.mjs` (from `run-tauri.mjs`) drops a local `where.exe` copy so `externalBin` resolves at compile time (gitignored; replace with `rename-sidecar.mjs` + real PyInstaller output for release).
+- [x] **Sidecar lifecycle in `start_sidecar`** — spawn bundled or dev subprocess → poll `/healthz` → emit `orchestrator-ready { port, token }`; dev child supervised same as bundled.
+- [x] **Orchestrator** `POST /v1/sessions/connect { port }` → `agent-browser --cdp <port> --session <id> --json connect <port>`; returns `{ session_id }`.
+- [x] **Orchestrator** `POST /v1/sessions/{id}/snapshot` → `agent-browser snapshot --max-output 20000` + screenshot PNG → stores `last_snapshot` in memory; returns `{ node_count, screenshot_path }`.
+- [x] **Browser adapter v1** in `mayra_orchestrator/browser/adapter.py` (`open`, `snapshot`, `screenshot_png_bytes`, `screenshot_annotated`, `execute` stub, `close_all`, `run_doctor`).
+- [x] **Screenshot save** — `MAYRA_DATA_DIR/screenshots/<session_id>/<step>-snapshot.webp`; recompress with Pillow (≤1280 px, q75) in `browser/preview_image.py`.
+- [x] **Tauri command** `asset_url(path)` validates path under `Mayra/screenshots` (caller still uses `convertFileSrc` in WebView).
+- [x] **Web** route `/sessions` — CDP detect, connect, list sessions, Snapshot, `LivePreviewPanel` + `OrchestratorClient` session/health APIs; nav link in `SiteNav`.
+- [x] **agent-browser doctor** — orchestrator lifespan runs `doctor --json`; `/healthz` includes `agent_browser_ok` / `agent_browser_detail`; UI banner on `/sessions` when unhealthy.
+- [x] **Integration test** `tests/integration/test_agent_browser_skips.py::test_open_and_snapshot` — runs when `agent-browser` on PATH and `MAYRA_INTEGRATION_CDP_PORT` set (live Chrome).
 
 ---
 
@@ -100,12 +100,12 @@ What's missing for a **first-run desktop dev loop** was: committed web/desktop l
 
 **Acceptance demo:** type "hello", see tokens stream in for ~1 s, then a `done success` event closes the message; click an "approval" dev button → modal renders → approve closes it.
 
-- [ ] **Web wiring** — `useChatStream(taskId)` already exists; verify it consumes `token`, `action`, `status`, `approval`, `done`.
-- [ ] **Orchestrator** echo-mode behind `MAYRA_DEV_ECHO=1`: stub stream emits 1 token per 50 ms; on `task.message` arrival, emits a `system_status` + `done success`.
-- [ ] **Approval dev hook** — `POST /v1/tasks/{id}/inject_approval` (dev only, env-gated) emits a synthetic `approval_request`; approve flow exercised end-to-end through `MessageApprovalRequest` → `/v1/actions/approve`.
-- [ ] **Abort wire** — `AbortButton` calls `/v1/tasks/{id}/abort`, UI handles `done aborted`.
-- [ ] **Composer** sends message via `/v1/tasks/{id}/message`, history reducer appends.
-- [ ] **RTL tests** assert token stream appends to the last assistant message; abort disables button until `done`.
+- [x] **Web wiring** — `useChatStream(taskId)` already exists; verify it consumes `token`, `action`, `status`, `approval`, `done`.
+- [x] **Orchestrator** echo-mode behind `MAYRA_DEV_ECHO=1`: stub stream emits 1 token per 50 ms; on `task.message` arrival, emits a `system_status` + `done success`.
+- [x] **Approval dev hook** — `POST /v1/tasks/{id}/inject_approval` (dev only, env-gated) emits a synthetic `approval_request`; approve flow exercised end-to-end through `MessageApprovalRequest` → `/v1/actions/approve`.
+- [x] **Abort wire** — `AbortButton` calls `/v1/tasks/{id}/abort`, UI handles `done aborted`.
+- [x] **Composer** sends message via `/v1/tasks/{id}/message`, history reducer appends.
+- [x] **RTL tests** assert token stream appends to the last assistant message; abort disables button until `done`.
 
 ---
 
@@ -222,22 +222,22 @@ Not blocking a release. Run when bored, between phases, or before public launch.
 
 | Suite | Count | Status |
 |--------|--------|--------|
-| Python unit (`tests/unit`) | 50 | ✅ |
+| Python unit (`tests/unit`) | 55 | ✅ |
 | Python provider (gemini respx) | 4 | ✅ |
-| Python contract (`tests/contract`) | 11 | ✅ |
-| Python integration (skipped) | 4 | ⏸ awaiting Phase 3 |
+| Python contract (`tests/contract`) | 13 | ✅ |
+| Python integration (optional) | 5 | ⏸ need `agent-browser` + `MAYRA_INTEGRATION_CDP_PORT` |
 | TS contracts vitest (`packages/contracts`) | 28 | ✅ |
 | Contracts pytest (`mayra-contracts`) | 28 | ✅ |
-| TS web vitest (`apps/web`) | 14 | ✅ (after `npm --prefix apps/web install`) |
+| TS web vitest (`apps/web`) | 15 | ✅ (after `npm --prefix apps/web install`) |
 | Desktop manifest (`apps/desktop`) | 3 | ✅ |
-| **Total green** | **135** | |
+| **Total green** | **151** | |
 
 Modules in tree:
 
 ```
 apps/orchestrator/mayra_orchestrator/
 ├─ settings.py, errors.py, perf.py, step_budget.py, parser.py
-├─ redaction.py, snapshot.py, risk.py
+├─ browser/{adapter.py, preview_image.py}
 ├─ actions/{schema.py, mapper.py}
 ├─ prompts/templates.py
 ├─ providers/gemini.py                # list_models probe only
@@ -250,10 +250,10 @@ apps/web/{next.config.ts, src/app/**, src/components/**,
           src/hooks/**, src/lib/**, src/providers/**, src/styles/globals.css}
 packages/config/{package.json, tsconfig.base.json}
 packages/contracts/{schemas/**, fixtures/**, src/generated.ts, python/mayra_contracts/**}
-scripts/{rename-sidecar.mjs, contracts-check.mjs}
+scripts/{rename-sidecar.mjs, contracts-check.mjs, dev-orchestrator.mjs, ensure-sidecar-placeholder.mjs}
 ```
 
-Still missing: agent-browser adapter, full agent loop wiring to a real provider, Supabase repos & migrations, structlog wiring, CI workflows, PyInstaller spec, bench harness.
+Still missing: full agent loop wiring to a real provider, Supabase repos & migrations, structlog wiring, CI workflows, PyInstaller spec, bench harness.
 
 ---
 

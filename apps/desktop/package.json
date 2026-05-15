@@ -6,9 +6,9 @@
   "scripts": {
     "test": "node --test ./tests/package-manifest.test.mjs",
     "tauri": "tauri",
-    "dev": "cross-env MAYRA_SKIP_SIDECAR=1 tauri dev",
-    "dev:with-sidecar": "tauri dev",
-    "build": "tauri build",
+    "dev": "cross-env MAYRA_SKIP_SIDECAR=1 node scripts/run-tauri.mjs dev",
+    "dev:with-sidecar": "cross-env MAYRA_ORCHESTRATOR_DEV=1 node scripts/run-tauri.mjs dev",
+    "build": "node scripts/run-tauri.mjs build",
     "sidecar:build": "node ../../scripts/rename-sidecar.mjs"
   },
   "devDependencies": {

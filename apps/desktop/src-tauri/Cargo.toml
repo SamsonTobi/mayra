@@ -28,7 +28,7 @@ base64 = "0.22"
 rand = "0.8"
 keyring = "3.6"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio = { version = "1", features = ["fs", "sync", "time", "macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["fs", "io-util", "process", "sync", "time", "macros", "rt-multi-thread"] }
 open = "5"
 url = "2"
 uuid = { version = "1", features = ["v4"] }

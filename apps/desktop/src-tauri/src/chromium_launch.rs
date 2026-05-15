@@ -62,15 +62,28 @@ pub fn launch_chromium_remote_debug(app: &AppHandle, browser: &str, port: u16) -
         };
 
         let port_arg = format!("--remote-debugging-port={port}");
+        // Chrome must bind to loopback explicitly on recent versions; defaults to 127.0.0.1 but be explicit.
+        let addr_arg = "--remote-debugging-address=127.0.0.1".to_string();
         let mut cmd = Command::new(exe);
         cmd.arg(&port_arg)
+            .arg(&addr_arg)
             .arg(&user_data)
+            .arg("--no-first-run")
+            .arg("--no-default-browser-check")
+            .arg("--disable-features=ChromeWhatsNewUI")
+            .arg("about:blank")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
 
-        cmd.spawn().map_err(|e| format!("failed to start {label}: {e}"))?;
-        log::info!("started {label} remote debugging on port {port}");
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("failed to start {label}: {e}"))?;
+        log::info!(
+            "started {label} remote debugging on port {port} (pid {}, user-data-dir={})",
+            child.id(),
+            user_data_dir.display()
+        );
         Ok(())
     }
 }

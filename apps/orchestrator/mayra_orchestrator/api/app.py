@@ -1,16 +1,20 @@
 """FastAPI ASGI app factory (+ lifespan hooks)."""
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.middleware.cors import CORSMiddleware
 
 from mayra_orchestrator.api.approval_registry import ApprovalRegistry
 from mayra_orchestrator.api.correlation import correlation_id_var, new_correlation_id
 from mayra_orchestrator.api.exceptions import install_exception_handlers
 from mayra_orchestrator.api.memory_tasks import MemoryTaskRegistry
+from mayra_orchestrator.api.routes.sessions import SessionBucket
 from mayra_orchestrator.api.routes.wire import wire_routes
+from mayra_orchestrator.browser.adapter import AgentBrowserAdapter
 from mayra_orchestrator.settings import AppSettings
 
 
@@ -61,6 +65,24 @@ class _DefaultModelClient:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    session_browser: AgentBrowserAdapter = app.state.session_browser
+    # Doctor can take a long time or spawn a browser; do not block ASGI startup or /healthz.
+    app.state.agent_browser_diagnostic = {
+        "pending": True,
+        "message": "agent-browser doctor is running in the background (this may open a browser once).",
+    }
+
+    async def _doctor_task() -> None:
+        try:
+            app.state.agent_browser_diagnostic = await session_browser.run_doctor()
+        except Exception as e:  # noqa: BLE001
+            app.state.agent_browser_diagnostic = {
+                "ok": False,
+                "missing": False,
+                "message": str(e),
+            }
+
+    asyncio.create_task(_doctor_task())
     yield
     reg: MemoryTaskRegistry = app.state.registry
     await reg.shutdown_all()
@@ -73,10 +95,14 @@ async def lifespan(app: FastAPI):
     close_all = getattr(browser, "close_all", None)
     if close_all is not None:
         await close_all()
+    sb_close = getattr(app.state.session_browser, "close_all", None)
+    if sb_close is not None:
+        await sb_close()
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
     settings = settings or AppSettings()
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
     app = FastAPI(title="Mayra Orchestrator", lifespan=lifespan)
     app.state.settings = settings
     registry = MemoryTaskRegistry()
@@ -85,8 +111,20 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.state.ui_logs = []
     app.state.browser = _StubBrowser()
     app.state.model_client = _DefaultModelClient()
+    app.state.browser_sessions = SessionBucket()
+    app.state.session_browser = AgentBrowserAdapter(data_dir=settings.data_dir)
 
     install_exception_handlers(app)
+
+    # WebView (localhost:3000) → orchestrator (127.0.0.1:*) is cross-origin; browser preflights POST + Authorization.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        allow_origins=["tauri://localhost", "https://tauri.localhost"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.middleware("http")
     async def _host_and_correlation(request: Request, call_next):

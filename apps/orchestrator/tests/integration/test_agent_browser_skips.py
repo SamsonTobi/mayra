@@ -5,15 +5,61 @@ Fast PR loop: `uv run pytest -m "not integration"` (default in CI).
 """
 from __future__ import annotations
 
+import os
 import shutil
+from pathlib import Path
 
 import pytest
+from httpx import ASGITransport, AsyncClient
+
+from mayra_orchestrator.api.app import create_app
+from mayra_orchestrator.settings import AppSettings
 
 pytestmark = pytest.mark.integration
 
 
 def _agent_browser() -> str | None:
     return shutil.which("agent-browser")
+
+
+@pytest.mark.skipif(_agent_browser() is None, reason="agent-browser not on PATH")
+@pytest.mark.asyncio
+async def test_open_and_snapshot(tmp_path: Path):
+    """Real CDP + agent-browser connect/snapshot (requires Chrome on MAYRA_INTEGRATION_CDP_PORT)."""
+    raw = os.environ.get("MAYRA_INTEGRATION_CDP_PORT", "").strip()
+    if not raw:
+        pytest.skip("set MAYRA_INTEGRATION_CDP_PORT for live Chrome remote-debugging port")
+
+    cdp_port = int(raw)
+    data = tmp_path / "data"
+    data.mkdir()
+    settings = AppSettings(token="integration-token", include_contract_routes=True, data_dir=data)
+    application = create_app(settings)
+
+    transport = ASGITransport(app=application)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://127.0.0.1:8000",
+        headers={"Host": "127.0.0.1:8000"},
+    ) as client:
+        r = await client.post(
+            "/v1/sessions/connect",
+            json={"port": cdp_port},
+            headers={"Authorization": "Bearer integration-token"},
+        )
+        assert r.status_code == 200, r.text
+        sid = r.json()["session_id"]
+        r2 = await client.post(
+            f"/v1/sessions/{sid}/snapshot",
+            headers={"Authorization": "Bearer integration-token"},
+        )
+        assert r2.status_code == 200, r2.text
+        body = r2.json()
+        assert isinstance(body.get("node_count"), int)
+        assert body["node_count"] > 0
+        shot = Path(body["screenshot_path"])
+        assert shot.is_file()
+        assert shot.stat().st_size > 0
 
 
 @pytest.mark.skipif(_agent_browser() is None, reason="agent-browser not on PATH")

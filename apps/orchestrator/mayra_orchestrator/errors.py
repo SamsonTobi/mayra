@@ -27,6 +27,8 @@ class BudgetExhaustedError(MayraError):
 class BrowserError(MayraError):
     """agent-browser returned an error or exited non-zero."""
 
+    code: str = "browser_error"
+
 
 class ProviderError(MayraError):
     """Model provider failed after retries."""

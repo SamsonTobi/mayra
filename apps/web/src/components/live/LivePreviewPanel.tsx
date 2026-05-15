@@ -18,8 +18,14 @@ export function LivePreviewPanel({ screenshotPath }: Props) {
     let cancelled = false;
     void (async () => {
       try {
-        const { convertFileSrc } = await import("@tauri-apps/api/core");
-        if (!cancelled) setSrc(convertFileSrc(screenshotPath));
+        const mod = await import("@tauri-apps/api/core");
+        let pathForSrc = screenshotPath;
+        try {
+          pathForSrc = await mod.invoke<string>("asset_url", { path: screenshotPath });
+        } catch {
+          /* non-Tauri or validation skipped */
+        }
+        if (!cancelled) setSrc(mod.convertFileSrc(pathForSrc));
       } catch {
         if (!cancelled) setSrc(null);
       }

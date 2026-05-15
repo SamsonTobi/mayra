@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "@/styles/globals.css";
 import { OrchestratorProvider } from "@/providers/orchestrator-context";
 import { SupabaseBootstrap } from "@/providers/supabase-bootstrap";
+import { BrowserShellHint } from "@/components/common/BrowserShellHint";
 import { SiteNav } from "@/components/common/SiteNav";
 
 export const metadata: Metadata = {
@@ -19,6 +20,7 @@ export default function RootLayout({
       <body>
         <OrchestratorProvider>
           <SupabaseBootstrap />
+          <BrowserShellHint />
           <SiteNav />
           <main className="shell">{children}</main>
         </OrchestratorProvider>

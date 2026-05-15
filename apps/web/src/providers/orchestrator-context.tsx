@@ -47,7 +47,8 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
   const [chromeMode, setChromeMode] = useState<"managed" | "remote" | null>(null);
 
   const client = useMemo(() => {
-    if (!handshake) return null;
+    if (!handshake || handshake.port === 0) return null;
+    if (!handshake.token) return null;
     return new OrchestratorClient(handshake.port, handshake.token);
   }, [handshake]);
 

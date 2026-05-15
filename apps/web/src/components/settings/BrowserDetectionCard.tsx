@@ -23,7 +23,7 @@ export function BrowserDetectionCard() {
 
   useEffect(() => {
     if (sessions.length === 0) return;
-    const interval = setInterval(() => detect({ silent: true }), SESSION_REFRESH_MS);
+    const interval = setInterval(() => void detect({ silent: true }), SESSION_REFRESH_MS);
     return () => clearInterval(interval);
   }, [detect, sessions.length]);
 
@@ -34,7 +34,7 @@ export function BrowserDetectionCard() {
     const label = browser === "chrome" ? "Chrome" : "Edge";
     setAutoDetectHint(`${label} launched. Auto-detecting in a few seconds…`);
     launchDetectTimer.current = setTimeout(() => {
-      detect();
+      void detect();
       setAutoDetectHint(null);
     }, LAUNCH_DETECT_DELAY_MS);
   };
@@ -44,7 +44,9 @@ export function BrowserDetectionCard() {
       <h2>Browsers (remote debugging)</h2>
       <p className="muted">
         Scan <code>127.0.0.1</code> ports 9222–9230 for Chromium DevTools (<strong>Chrome</strong>,{" "}
-        <strong>Edge</strong>, etc.) using <code>--remote-debugging-port</code>.
+        <strong>Edge</strong>, etc.) using <code>--remote-debugging-port</code>. A window opened by{" "}
+        <code>agent-browser doctor</code> (orchestrator startup) is <strong>not</strong> this — use{" "}
+        <strong>Launch</strong> below.
       </p>
       <div
         className="row"
@@ -54,7 +56,7 @@ export function BrowserDetectionCard() {
           type="button"
           className="btn btn-primary"
           disabled={loading}
-          onClick={detect}
+          onClick={() => void detect()}
         >
           {loading ? "Detecting…" : "Detect browsers"}
         </button>

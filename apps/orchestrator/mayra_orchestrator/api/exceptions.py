@@ -5,7 +5,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from mayra_orchestrator.api.correlation import get_correlation_id
-from mayra_orchestrator.errors import ActionValidationError, MayraError, OwnerMismatchError
+from mayra_orchestrator.errors import (
+    ActionValidationError,
+    BrowserError,
+    MayraError,
+    OwnerMismatchError,
+)
 
 
 def install_exception_handlers(app: FastAPI) -> None:
@@ -15,6 +20,17 @@ def install_exception_handlers(app: FastAPI) -> None:
             status_code=403,
             content={
                 "code": getattr(exc, "code", "owner_mismatch"),
+                "message": str(exc),
+                "correlation_id": get_correlation_id(),
+            },
+        )
+
+    @app.exception_handler(BrowserError)
+    async def _browser(_: Request, exc: BrowserError) -> JSONResponse:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "code": getattr(exc, "code", "browser_error"),
                 "message": str(exc),
                 "correlation_id": get_correlation_id(),
             },

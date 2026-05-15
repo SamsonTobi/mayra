@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import json
+import datetime
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -37,8 +41,64 @@ async def create_task(
             run_agent_loop(request.app, tid, get_correlation_id()),
             name=f"mayra-task-{tid}",
         )
+    elif os.environ.get("MAYRA_DEV_ECHO") == "1":
+        # Launch echo runner
+        rec = reg.tasks[tid]
+        rec.live_loop = True
+        async def _echo_runner():
+            while True:
+                try:
+                    msg = await rec.messages.get()
+                    for word in msg.split():
+                        await rec.sse_queue.put(("token", word + " "))
+                        await asyncio.sleep(0.05)
+                    ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    await rec.sse_queue.put(("status", json.dumps({
+                        "kind": "system_status",
+                        "status": "echo received",
+                        "ts": ts
+                    })))
+                    await rec.sse_queue.put(("done", json.dumps({
+                        "kind": "done",
+                        "task_id": tid,
+                        "status": "success"
+                    })))
+                except asyncio.CancelledError:
+                    break
+        rec.agent_runner = asyncio.create_task(_echo_runner(), name=f"mayra-echo-{tid}")
     return CreateTaskResponse(task_id=tid)
 
+@router.post("/{task_id}/inject_approval")
+async def inject_approval(
+    request: Request,
+    task_id: str,
+    owner_id: Annotated[str, Depends(get_effective_owner_id)],
+) -> dict[str, str]:
+    if os.environ.get("MAYRA_DEV_ECHO") != "1":
+        raise HTTPException(status_code=400, detail="dev echo only")
+
+    approvals = request.app.state.approval_registry
+    approval_id = approvals.register(task_id)
+
+    reg = request.app.state.registry
+    rec = reg.ensure_task_owned(task_id, owner_id)
+
+    payload = {
+        "id": approval_id,
+        "kind": "approval_request",
+        "action": {
+            "action": "click",
+            "target_ref": "@stub",
+            "value": None,
+            "risk": "high",
+            "reason": "Dev injected approval"
+        },
+        "screenshot_path": None,
+        "expires_at": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5)).isoformat(),
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    }
+    await rec.sse_queue.put(("approval", json.dumps(payload)))
+    return {"ok": "true"}
 
 @router.post("/{task_id}/abort")
 async def abort_task(

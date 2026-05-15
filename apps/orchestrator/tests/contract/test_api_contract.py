@@ -15,7 +15,9 @@ pytestmark = pytest.mark.contract
 async def test_healthz_returns_ok_without_auth(client):
     r = await client.get("/healthz")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok"}
+    body = r.json()
+    assert body["status"] == "ok"
+    assert "agent_browser_ok" in body
 
 
 @pytest.mark.asyncio

@@ -13,12 +13,14 @@ def wire_routes(app: FastAPI, settings: AppSettings) -> None:
         chat_stream,
         contract_misc,
         health,
+        sessions,
         settings_validate,
         tasks,
         ui_logs,
     )
 
     app.include_router(health.router)
+    app.include_router(sessions.router)
     app.include_router(tasks.router)
     app.include_router(actions.router)
     app.include_router(settings_validate.router)
