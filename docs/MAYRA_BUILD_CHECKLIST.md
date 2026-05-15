@@ -137,7 +137,7 @@ What's missing for a **first-run desktop dev loop** was: committed web/desktop l
 
 **Acceptance demo:** on a fixture site with a "Delete account" button, "delete my account" → high-risk approval modal appears with annotated screenshot → reject ends loop with `done aborted`.
 
-- [ ] **`reclassify_risk()` wired** into `run_agent_loop` (already exists as module — integrate, with tests in `test_agent_loop.py`).
+- [x] **`reclassify_risk()` wired** into `run_agent_loop` (already exists as module — integrate, with tests in `test_agent_loop.py`).
 - [ ] **Approval modal** shows annotated screenshot (refs labelled); reject → `done aborted`; approve → loop continues.
 - [ ] **Redaction** in action logs — password / OTP / secret-pattern fields show `[REDACTED:<reason>]`.
 - [ ] **OTP detection** — pattern match on textbox role+name `code|otp|verification` → emit `wait` + Tauri notification (F12).
