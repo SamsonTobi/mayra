@@ -10,6 +10,7 @@ import pytest
 
 from mayra_orchestrator.actions.schema import Action
 from mayra_orchestrator.redaction import redact, redact_for_display
+from mayra_orchestrator.snapshot import Snapshot
 
 
 pytestmark = pytest.mark.unit
@@ -56,6 +57,21 @@ def test_password_field_value_becomes_redacted_marker():
     assert out.value is not None
     assert out.value.startswith("[REDACTED")
     assert "hunter2" not in out.value
+
+
+def test_snapshot_password_ref_value_becomes_redacted_marker(snapshot_payload, node):
+    snap = Snapshot.from_json(
+        snapshot_payload(node("@e2", role="textbox", name="Password", is_password_or_otp=True))
+    )
+    a = Action(
+        action="type",
+        target_ref="@e2",
+        value="hunter2",
+        risk="high",
+        reason="fill login",
+    )
+    out = redact_for_display(a, snap)
+    assert out.value == "[REDACTED:password_field]"
 
 
 def test_redact_for_display_preserves_non_sensitive_type():

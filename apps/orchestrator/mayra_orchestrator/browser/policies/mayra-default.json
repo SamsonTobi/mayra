@@ -1,0 +1,21 @@
+{
+  "deny": [
+    { "category": "eval" },
+    { "category": "download", "confirm": true },
+    { "category": "upload", "confirm": true },
+    { "category": "clipboard" },
+    { "category": "cookies" },
+    { "category": "storage" },
+    { "category": "network.route" },
+    { "category": "addinitscript" }
+  ],
+  "allow": [
+    { "category": "click" },
+    { "category": "fill" },
+    { "category": "scroll" },
+    { "category": "navigate" },
+    { "category": "wait" },
+    { "category": "screenshot" },
+    { "category": "snapshot" }
+  ]
+}

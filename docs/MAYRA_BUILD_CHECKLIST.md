@@ -138,16 +138,16 @@ What's missing for a **first-run desktop dev loop** was: committed web/desktop l
 **Acceptance demo:** on a fixture site with a "Delete account" button, "delete my account" → high-risk approval modal appears with annotated screenshot → reject ends loop with `done aborted`.
 
 - [x] **`reclassify_risk()` wired** into `run_agent_loop` (already exists as module — integrate, with tests in `test_agent_loop.py`).
-- [ ] **Approval modal** shows annotated screenshot (refs labelled); reject → `done aborted`; approve → loop continues.
-- [ ] **Redaction** in action logs — password / OTP / secret-pattern fields show `[REDACTED:<reason>]`.
-- [ ] **OTP detection** — pattern match on textbox role+name `code|otp|verification` → emit `wait` + Tauri notification (F12).
-- [ ] **Manual takeover** — observation_hash diff before each step; mismatch → 30 s auto-resume or `approve resume:<task_id>` (F11, spec §A.6).
-- [ ] **`agent-browser` policy file** `policies/mayra-default.json` denies `eval/download/upload/clipboard/cookies/storage/network.route/addinitscript`.
-- [ ] **Tests**:
-  - [ ] Risk: stale-snapshot detection by timestamp drift.
-  - [ ] Risk: domain check for `navigate` (treat `value=null` as invalid).
-  - [ ] RTL: `MessageActionLog` renders `[REDACTED:password_field]`.
-  - [ ] RTL: `MessageApprovalRequest` calls `/v1/actions/approve` on click.
+- [x] **Approval modal** shows annotated screenshot (refs labelled); reject → `done aborted`; approve → loop continues.
+- [x] **Redaction** in action logs — password / OTP / secret-pattern fields show `[REDACTED:<reason>]`.
+- [x] **OTP detection** — pattern match on textbox role+name `code|otp|verification` → emit `wait` + Tauri notification (F12).
+- [x] **Manual takeover** — observation_hash diff before each step; mismatch → 30 s auto-resume or `approve resume:<task_id>` (F11, spec §A.6).
+- [x] **`agent-browser` policy file** `policies/mayra-default.json` denies `eval/download/upload/clipboard/cookies/storage/network.route/addinitscript`.
+- [x] **Tests**:
+  - [x] Risk: stale-snapshot detection by timestamp drift.
+  - [x] Risk: domain check for `navigate` (treat `value=null` as invalid).
+  - [x] RTL: `MessageActionLog` renders `[REDACTED:password_field]`.
+  - [x] RTL: `MessageApprovalRequest` calls `/v1/actions/approve` on click.
 
 ---
 

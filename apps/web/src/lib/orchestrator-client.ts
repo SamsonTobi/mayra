@@ -1,6 +1,7 @@
 export type CreateTaskInput = {
   goal: string;
   allowed_domains: string[];
+  initial_messages?: string[];
   session_id?: string | null;
   start_blocked_sleeper?: boolean;
   start_agent_loop?: boolean;

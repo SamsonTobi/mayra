@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from mayra_orchestrator.browser.adapter import AgentBrowserAdapter
+from mayra_orchestrator.browser.adapter import _POLICY_PATH, AgentBrowserAdapter
 from mayra_orchestrator.errors import BrowserError
 
 
@@ -35,6 +35,13 @@ async def test_execute_uses_validated_command_tokens(monkeypatch):
             "--session",
             "session-1",
             "--json",
+            "--content-boundaries",
+            "--max-output",
+            "20000",
+            "--action-policy",
+            str(_POLICY_PATH),
+            "--confirm-actions",
+            "eval,download,upload",
             "click",
             "@e1",
         )

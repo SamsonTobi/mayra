@@ -26,6 +26,7 @@ _CDP_HOSTS = ("127.0.0.1", "localhost")
 _CDP_CONNECT_TIMEOUT = 3.0
 _CDP_COMMAND_TIMEOUT = 10.0
 _CDP_MAX_WS_MESSAGE = 64 * 1024 * 1024
+_POLICY_PATH = Path(__file__).with_name("policies") / "mayra-default.json"
 
 
 def _lookup_agent_browser_exe() -> str | None:
@@ -161,26 +162,40 @@ class AgentBrowserAdapter:
         self._data_dir = data_dir
         self._session_ports: dict[str, int] = {}
 
-    def _base(self, session_id: str) -> list[str]:
+    def _base(self, session_id: str, allowed_domains: list[str] | None = None) -> list[str]:
         if session_id not in self._session_ports:
             raise BrowserError(f"unknown session {session_id!r} (call open first)")
         port = self._session_ports[session_id]
-        return [
+        cmd = [
             _require_agent_browser_exe(),
             "--cdp",
             str(port),
             "--session",
             session_id,
             "--json",
+            "--content-boundaries",
+            "--max-output",
+            "20000",
+            "--action-policy",
+            str(_POLICY_PATH),
+            "--confirm-actions",
+            "eval,download,upload",
         ]
+        if self._data_dir:
+            cmd.extend(["--download-path", str(self._data_dir / "downloads")])
+        if allowed_domains:
+            cmd.extend(["--allowed-domains", ",".join(allowed_domains)])
+        return cmd
 
     async def _exec(self, *argv: str, timeout: float = 120.0) -> dict[str, Any]:
+        env = os.environ.copy()
+        env["AGENT_BROWSER_DEFAULT_TIMEOUT"] = str(int(timeout * 1000))
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=os.environ.copy(),
+                env=env,
             )
         except FileNotFoundError as e:
             raise BrowserError(
@@ -225,13 +240,11 @@ class AgentBrowserAdapter:
         await _probe_cdp_endpoint(cdp_port)
         self._session_ports[session_id] = cdp_port
 
-    async def snapshot(self, session_id: str) -> dict[str, Any]:
+    async def snapshot(self, session_id: str, allowed_domains: list[str] | None = None) -> dict[str, Any]:
         """Accessibility snapshot with agent-browser refs usable for later actions."""
         payload = await self._exec(
-            *self._base(session_id),
+            *self._base(session_id, allowed_domains),
             "snapshot",
-            "--max-output",
-            "20000",
             timeout=60.0,
         )
         if payload.get("success") is False:
@@ -256,13 +269,13 @@ class AgentBrowserAdapter:
         except ValueError as e:
             raise BrowserError("CDP Page.captureScreenshot returned invalid base64") from e
 
-    async def screenshot_annotated(self, task_id: str) -> tuple[bytes, str]:
+    async def screenshot_annotated(self, task_id: str, allowed_domains: list[str] | None = None) -> tuple[bytes, str]:
         """Annotated screenshot for a known CDP session id (same id passed to `open`)."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             tmp_path = Path(tmp.name)
         try:
             payload = await self._exec(
-                *self._base(task_id),
+                *self._base(task_id, allowed_domains),
                 "screenshot",
                 str(tmp_path),
                 "--annotate",
@@ -275,10 +288,10 @@ class AgentBrowserAdapter:
         finally:
             tmp_path.unlink(missing_ok=True)
 
-    async def execute(self, task_id: str, action: object, cmds: list[str]) -> None:
+    async def execute(self, task_id: str, action: object, cmds: list[str], allowed_domains: list[str] | None = None) -> None:
         """Execute a validated action command against the attached CDP session."""
         _ = action
-        payload = await self._exec(*self._base(task_id), *cmds, timeout=120.0)
+        payload = await self._exec(*self._base(task_id, allowed_domains), *cmds, timeout=120.0)
         if payload.get("success") is False:
             raise BrowserError(str(payload.get("error") or payload))
         if "error" in payload:

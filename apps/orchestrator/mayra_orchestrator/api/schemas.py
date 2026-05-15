@@ -13,6 +13,7 @@ class StrictModel(BaseModel):
 class CreateTaskRequest(StrictModel):
     goal: str
     allowed_domains: list[str]
+    initial_messages: list[str] = Field(default_factory=list, max_length=24)
     session_id: str | None = None
     start_blocked_sleeper: bool = False
     start_agent_loop: bool = False

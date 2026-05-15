@@ -6,7 +6,7 @@ import base64
 import pytest
 
 from mayra_orchestrator.browser import adapter as adapter_module
-from mayra_orchestrator.browser.adapter import AgentBrowserAdapter, snapshot_node_count
+from mayra_orchestrator.browser.adapter import _POLICY_PATH, AgentBrowserAdapter, snapshot_node_count
 
 pytestmark = pytest.mark.unit
 
@@ -69,9 +69,14 @@ async def test_snapshot_uses_agent_browser_refs(monkeypatch):
             "--session",
             "sid",
             "--json",
-            "snapshot",
+            "--content-boundaries",
             "--max-output",
             "20000",
+            "--action-policy",
+            str(_POLICY_PATH),
+            "--confirm-actions",
+            "eval,download,upload",
+            "snapshot",
         )
         return {"data": {"refs": {"e1": {"role": "button"}}}}
 

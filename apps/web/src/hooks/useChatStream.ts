@@ -17,6 +17,38 @@ const initial: ChatStreamState = {
   failed: false,
 };
 
+function newId(prefix: string): string {
+  return (
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? `${prefix}-${crypto.randomUUID()}`
+      : `${prefix}-${Date.now()}`
+  );
+}
+
+function userBubble(text: string): ChatMessage {
+  return { id: newId("user"), kind: "user", text, ts: new Date().toISOString() };
+}
+
+function streamFailureBubble(): ChatMessage {
+  return {
+    id: newId("stream-error"),
+    kind: "system_status",
+    text: "Chat stream disconnected before the task finished. Check the orchestrator/browser session and try again.",
+    severity: "error",
+    ts: new Date().toISOString(),
+  };
+}
+
+function systemBubble(text: string, severity: "info" | "warn" | "error"): ChatMessage {
+  return {
+    id: newId("system"),
+    kind: "system_status",
+    text,
+    severity,
+    ts: new Date().toISOString(),
+  };
+}
+
 /**
  * Opens `EventSource` on `/v1/chat/stream` for a given `taskId`
  * (MAYRA_TECHNICAL_SPEC §3.4, MAYRA_DESKTOP_UX_FLOWS §4.3).
@@ -24,23 +56,76 @@ const initial: ChatStreamState = {
 export function useChatStream(
   port: number | null,
   token: string | null,
-): ChatStreamState & { start: (taskId: string) => void; reset: () => void } {
+): ChatStreamState & {
+  start: (taskId: string) => void;
+  reset: () => void;
+  appendUserMessage: (text: string) => void;
+  appendSystemMessage: (text: string, severity?: "info" | "warn" | "error") => void;
+} {
   const [state, setState] = useState<ChatStreamState>(initial);
   const esRef = useRef<EventSource | null>(null);
+  const suppressEsErrorRef = useRef(false);
 
   const reset = useCallback(() => {
+    suppressEsErrorRef.current = true;
     esRef.current?.close();
     esRef.current = null;
+    queueMicrotask(() => {
+      suppressEsErrorRef.current = false;
+    });
     setState(initial);
   }, []);
+
+  const appendUserMessage = useCallback((text: string) => {
+    const t = text.trim();
+    if (!t) return;
+    setState((prev) => ({
+      ...prev,
+      messages: [...prev.messages, userBubble(t)],
+    }));
+  }, []);
+
+  const appendSystemMessage = useCallback(
+    (text: string, severity: "info" | "warn" | "error" = "info") => {
+      const t = text.trim();
+      if (!t) return;
+      setState((prev) => ({
+        ...prev,
+        messages: [...prev.messages, systemBubble(t, severity)],
+      }));
+    },
+    [],
+  );
 
   const start = useCallback(
     (taskId: string) => {
       if (port == null || token == null || !taskId) return;
-      reset();
+      suppressEsErrorRef.current = true;
+      esRef.current?.close();
+      esRef.current = null;
+      queueMicrotask(() => {
+        suppressEsErrorRef.current = false;
+      });
+      setState((prev) => ({
+        ...prev,
+        done: false,
+        failed: false,
+        lastDoneStatus: undefined,
+      }));
       const url = `http://127.0.0.1:${port}/v1/chat/stream?task_id=${encodeURIComponent(taskId)}&token=${encodeURIComponent(token)}`;
       const es = new EventSource(url);
       esRef.current = es;
+
+      const closeAsSettled = () => {
+        suppressEsErrorRef.current = true;
+        es.close();
+        if (esRef.current === es) {
+          esRef.current = null;
+        }
+        queueMicrotask(() => {
+          suppressEsErrorRef.current = false;
+        });
+      };
 
       const fold = (event: string, data: string) => {
         setState((prev) => {
@@ -57,6 +142,9 @@ export function useChatStream(
             lastDoneStatus: next.doneStatus ?? prev.lastDoneStatus,
           };
         });
+        if (event === "done" || event === "error") {
+          closeAsSettled();
+        }
       };
 
       const onAny = (eventType: string) => (ev: MessageEvent) => {
@@ -70,19 +158,22 @@ export function useChatStream(
       es.addEventListener("done", onAny("done"));
       es.addEventListener("error", onAny("error"));
       es.onerror = () => {
+        if (suppressEsErrorRef.current) return;
         setState((prev) => ({
           ...prev,
+          messages: prev.failed ? prev.messages : [...prev.messages, streamFailureBubble()],
           failed: true,
           done: true,
         }));
         es.close();
       };
     },
-    [port, token, reset],
+    [port, token],
   );
 
   useEffect(
     () => () => {
+      suppressEsErrorRef.current = true;
       esRef.current?.close();
     },
     [],
@@ -96,7 +187,18 @@ export function useChatStream(
       lastDoneStatus: state.lastDoneStatus,
       start,
       reset,
+      appendUserMessage,
+      appendSystemMessage,
     }),
-    [state.messages, state.done, state.failed, state.lastDoneStatus, start, reset],
+    [
+      state.messages,
+      state.done,
+      state.failed,
+      state.lastDoneStatus,
+      start,
+      reset,
+      appendUserMessage,
+      appendSystemMessage,
+    ],
   );
 }

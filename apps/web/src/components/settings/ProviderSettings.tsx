@@ -79,6 +79,18 @@ export function ProviderSettings() {
         Model provider, API keys via Tauri keyring, and validate via{" "}
         <code>POST /v1/settings/validate</code> (MAYRA_DESKTOP_UX_FLOWS F3).
       </p>
+      {tauriReady && status ? (
+        <p className="muted" style={{ marginBottom: "0.75rem" }}>
+          {status.configured ? (
+            <>
+              Gemini key is saved (last 4: <code>{status.last4}</code>). Re-open Settings anytime to
+              replace it.
+            </>
+          ) : (
+            <>No Gemini key saved yet — paste below and click Save.</>
+          )}
+        </p>
+      ) : null}
       <label className="muted" htmlFor="gemini-key">
         Gemini API key
       </label>

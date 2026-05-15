@@ -26,7 +26,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 rand = "0.8"
-keyring = "3.6"
+# v3 requires explicit stores; without features the default is an in-memory mock (keys lost on restart).
+# See https://crates.io/crates/keyring — use one feature set per OS family in this single manifest.
+keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["fs", "io-util", "process", "sync", "time", "macros", "rt-multi-thread"] }
 open = "5"

@@ -50,7 +50,7 @@ class FakeSessionBrowser:
         self.opened.append((cdp_port, session_id))
         self._ports[session_id] = cdp_port
 
-    async def snapshot(self, session_id: str) -> dict[str, Any]:
+    async def snapshot(self, session_id: str, allowed_domains: list[str] | None = None) -> dict[str, Any]:
         _ = session_id
         n = 247
         return {
@@ -70,10 +70,10 @@ class FakeSessionBrowser:
         Image.new("RGB", (4, 4), color=(10, 20, 30)).save(buf, format="PNG")
         return buf.getvalue()
 
-    async def screenshot_annotated(self, session_id: str) -> tuple[bytes, str]:
+    async def screenshot_annotated(self, session_id: str, allowed_domains: list[str] | None = None) -> tuple[bytes, str]:
         return (await self.screenshot_png_bytes(session_id), "image/png")
 
-    async def execute(self, session_id: str, action: Any, cmds: list[str]) -> None:
+    async def execute(self, session_id: str, action: Any, cmds: list[str], allowed_domains: list[str] | None = None) -> None:
         self.executions.append((session_id, action, cmds))
 
     async def close_all(self) -> None:
@@ -159,15 +159,15 @@ class FakeBrowser:
         _ = (args, kwargs)
         return None
 
-    async def snapshot(self, task_id: str) -> Any:
+    async def snapshot(self, task_id: str, allowed_domains: list[str] | None = None) -> Any:
         _ = task_id
         return {"nodes": list(self.nodes)}
 
-    async def screenshot_annotated(self, task_id: str) -> Any:
+    async def screenshot_annotated(self, task_id: str, allowed_domains: list[str] | None = None) -> Any:
         _ = task_id
         return (b"x", "image/png")
 
-    async def execute(self, task_id: str, action: Any, cmds: list[str]) -> None:
+    async def execute(self, task_id: str, action: Any, cmds: list[str], allowed_domains: list[str] | None = None) -> None:
         self.executions.append((task_id, action, cmds))
 
     async def close_all(self) -> None:

@@ -14,6 +14,7 @@ class TaskRecord:
     goal: str
     allowed_domains: list[str]
     owner_id: str
+    initial_messages: list[str] = field(default_factory=list)
     session_id: str | None = None
     messages: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     approval_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -25,6 +26,7 @@ class TaskRecord:
     max_steps: int = 40
     exhaust_budget_probe: bool = False
     status: str = "running"
+    last_observation_hash: str | None = None
 
 
 class MemoryTaskRegistry:
@@ -37,6 +39,7 @@ class MemoryTaskRegistry:
         allowed_domains: list[str],
         *,
         owner_id: str,
+        initial_messages: list[str] | None = None,
         start_blocked_sleeper: bool = False,
         live_loop: bool = False,
         max_steps: int = 40,
@@ -48,6 +51,7 @@ class MemoryTaskRegistry:
             goal=goal,
             allowed_domains=list(allowed_domains),
             owner_id=owner_id,
+            initial_messages=list(initial_messages or []),
             session_id=session_id,
             live_loop=live_loop,
             max_steps=max_steps,

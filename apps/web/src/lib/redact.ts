@@ -1,6 +1,7 @@
 import type { Action } from "@mayra/contracts";
 
 const PASSWORD_FIELD = /password|passwd|pwd|secret/i;
+const OTP_FIELD = /otp|code|passcode|verification/i;
 
 /**
  * Last-line UI defense: mask values when the accessibility ref hints at a secret field
@@ -12,6 +13,9 @@ export function redactActionValueForDisplay(action: Action): string {
   const ref = action.target_ref ?? "";
   if (PASSWORD_FIELD.test(ref)) {
     return "[REDACTED:password_field]";
+  }
+  if (OTP_FIELD.test(ref)) {
+    return "[REDACTED:otp_field]";
   }
   return v;
 }

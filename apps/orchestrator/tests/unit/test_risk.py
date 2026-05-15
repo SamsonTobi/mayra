@@ -45,6 +45,17 @@ def test_navigate_to_disallowed_host_is_high(snapshot_payload, risk_ctx):
     assert result.risk == "high"
 
 
+def test_navigate_with_null_value_is_invalid_before_risk():
+    with pytest.raises(ValueError, match="navigate requires a URI value"):
+        Action(
+            action="navigate",
+            target_ref=None,
+            value=None,
+            risk="low",
+            reason="missing URL",
+        )
+
+
 def test_navigate_to_allowed_host_keeps_low(snapshot_payload, risk_ctx):
     snap = Snapshot.from_json(snapshot_payload())
     action = Action(

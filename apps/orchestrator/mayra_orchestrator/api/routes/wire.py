@@ -17,6 +17,7 @@ def wire_routes(app: FastAPI, settings: AppSettings) -> None:
         settings_validate,
         tasks,
         ui_logs,
+        shutdown,
     )
 
     app.include_router(health.router)
@@ -26,5 +27,6 @@ def wire_routes(app: FastAPI, settings: AppSettings) -> None:
     app.include_router(settings_validate.router)
     app.include_router(ui_logs.router)
     app.include_router(chat_stream.router)
+    app.include_router(shutdown.router)
     if settings.include_contract_routes:
         app.include_router(contract_misc.router)

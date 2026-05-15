@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from mayra_orchestrator.actions.schema import Action
+from mayra_orchestrator.snapshot import Snapshot
 
 _PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"sk-[A-Za-z0-9]{20,}"),
@@ -23,7 +24,8 @@ _SENSITIVE_KEYS: frozenset[str] = frozenset(
     {"password", "api_key", "token", "secret", "authorization", "cookie", "otp"}
 )
 
-_PASSWORD_HINTS: tuple[str, ...] = ("password", "otp", "passcode", "verification")
+_PASSWORD_HINTS: tuple[str, ...] = ("password", "passwd", "pwd", "secret")
+_OTP_HINTS: tuple[str, ...] = ("otp", "code", "passcode", "verification")
 
 
 def redact(obj: Any) -> Any:
@@ -47,10 +49,22 @@ def redact(obj: Any) -> Any:
     return obj
 
 
-def redact_for_display(action: Action) -> Action:
+def redact_for_display(action: Action, snapshot: Snapshot | None = None) -> Action:
     if action.action != "type" or action.target_ref is None:
         return action
+
+    if snapshot is not None:
+        node = snapshot.find(action.target_ref)
+        if node is not None:
+            haystack = f"{node.role} {node.name} {node.text} {node.input_type or ''}".lower()
+            if node.is_password_or_otp or any(h in haystack for h in _PASSWORD_HINTS):
+                return action.model_copy(update={"value": "[REDACTED:password_field]"})
+            if any(h in haystack for h in _OTP_HINTS):
+                return action.model_copy(update={"value": "[REDACTED:otp_field]"})
+
     ref_lower = action.target_ref.lower()
     if any(h in ref_lower for h in _PASSWORD_HINTS):
         return action.model_copy(update={"value": "[REDACTED:password_field]"})
+    if any(h in ref_lower for h in _OTP_HINTS):
+        return action.model_copy(update={"value": "[REDACTED:otp_field]"})
     return action

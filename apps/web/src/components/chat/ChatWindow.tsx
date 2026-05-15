@@ -10,13 +10,32 @@ import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
 import { TypingIndicator } from "./TypingIndicator";
 
+function conversationHistory(messages: ReturnType<typeof useChatStream>["messages"]): string[] {
+  return messages
+    .flatMap((message) => {
+      if (message.kind === "user") return [`user:${message.text}`];
+      if (message.kind === "assistant") return [`assistant:${message.markdown}`];
+      return [];
+    })
+    .filter((line) => line.trim().length > 0)
+    .slice(-16);
+}
+
 export function ChatWindow() {
   const { client, port, token } = useOrchestrator();
   const [taskId, setTaskId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionId, setSessionId] = useState<string>("");
   const [sessionError, setSessionError] = useState<string | null>(null);
-  const { messages, done, start, reset } = useChatStream(port, token);
+  const {
+    messages,
+    done,
+    failed,
+    start,
+    reset,
+    appendUserMessage,
+    appendSystemMessage,
+  } = useChatStream(port, token);
 
   const refreshSessions = useCallback(async () => {
     if (!client) return;
@@ -48,22 +67,58 @@ export function ChatWindow() {
   const onSend = useCallback(
     async (text: string) => {
       if (!client) return;
+      const trimmed = text.trim();
+      if (!trimmed) return;
+
       if (taskId && !done) {
-        await client.postTaskMessage(taskId, text);
-      } else {
+        appendUserMessage(trimmed);
+        try {
+          await client.postTaskMessage(taskId, trimmed);
+        } catch (e) {
+          appendSystemMessage(
+            e instanceof Error ? e.message : "Could not send follow-up message.",
+            "error",
+          );
+        }
+        return;
+      }
+
+      const initialMessages = conversationHistory(messages);
+      // Removed reset() so the chat doesn't clear on every new task
+      appendUserMessage(trimmed);
+      try {
         const res = await client.createTask({
-          goal: text,
+          goal: trimmed,
           allowed_domains: ["example.com"],
+          initial_messages: initialMessages,
           session_id: sessionId || null,
           start_agent_loop: true,
-          max_steps: 5,
+          max_steps: 3,
         });
         setTaskId(res.task_id);
         start(res.task_id);
+      } catch (e) {
+        appendSystemMessage(
+          e instanceof Error ? e.message : "Could not start chat task.",
+          "error",
+        );
       }
     },
-    [client, taskId, done, sessionId, start],
+    [
+      client,
+      taskId,
+      done,
+      sessionId,
+      messages,
+      start,
+      reset,
+      appendUserMessage,
+      appendSystemMessage,
+    ],
   );
+
+  const showDevApprovalInject =
+    process.env.NEXT_PUBLIC_MAYRA_DEV_CHAT_TOOLS === "1";
 
   const onInjectApproval = useCallback(async () => {
     if (!client || !taskId) return;
@@ -84,11 +139,17 @@ export function ChatWindow() {
     (m) => m.kind === "assistant" && m.streaming,
   );
 
+  const awaitingAssistant =
+    Boolean(taskId && client && !done && !failed) &&
+    messages.some((m) => m.kind === "user") &&
+    !messages.some((m) => m.kind === "assistant") &&
+    !streamingAssistant;
+
   return (
     <section>
       <h1>Chat</h1>
       <p className="muted">
-        Streams from <code>/v1/chat/stream</code> (MAYRA_TECHNICAL_SPEC §3.4).
+        Choose a connected browser session, then send a goal. The agent streams progress here.
       </p>
       <div className="row" style={{ gap: "1rem", marginBottom: "1rem" }}>
         <AbortButton
@@ -96,11 +157,11 @@ export function ChatWindow() {
           disabled={!taskId || done}
           onAbort={onAbort}
         />
-        {taskId && !done && (
-          <button type="button" className="btn" onClick={onInjectApproval}>
-            Inject Approval (Dev)
+        {showDevApprovalInject && taskId && !done ? (
+          <button type="button" className="btn" onClick={() => void onInjectApproval()}>
+            Inject approval (dev only)
           </button>
-        )}
+        ) : null}
       </div>
       <div className="row" style={{ gap: "0.75rem", marginBottom: "1rem" }}>
         <label className="muted" htmlFor="chat-session">
@@ -125,6 +186,11 @@ export function ChatWindow() {
       </div>
       {sessionError ? <div className="banner">{sessionError}</div> : null}
       <MessageList messages={messages} port={port} token={token} />
+      {awaitingAssistant ? (
+        <p className="muted" style={{ margin: "0.5rem 0" }}>
+          Waiting for the agent (browser snapshot + model)…
+        </p>
+      ) : null}
       {streamingAssistant ? <TypingIndicator /> : null}
       <Composer onSend={onSend} disabled={!client || !sessionId} />
       <LivePreviewPanel screenshotPath={lastShot} />

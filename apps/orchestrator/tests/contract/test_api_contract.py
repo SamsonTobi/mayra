@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from mayra_orchestrator.errors import BrowserError
 from tests.contract.conftest import auth_headers, parse_sse_events
 
 pytestmark = pytest.mark.contract
@@ -164,6 +165,53 @@ async def test_stream_emits_token_then_action_then_done(client, app_settings):
     payload = json.loads(done_data)
     assert payload["task_id"] == tid
     assert payload["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_live_stream_reports_browser_snapshot_failures(client, app, app_settings):
+    async def fail_snapshot(session_id: str):
+        _ = session_id
+        raise BrowserError("snapshot failed")
+
+    app.state.session_browser.snapshot = fail_snapshot
+    headers = auth_headers(app_settings.token)
+    connected = await client.post(
+        "/v1/sessions/connect",
+        json={"port": 9222},
+        headers=headers,
+    )
+    sid = connected.json()["session_id"]
+    created = await client.post(
+        "/v1/tasks",
+        json={
+            "goal": "x",
+            "allowed_domains": ["example.com"],
+            "session_id": sid,
+            "start_agent_loop": True,
+            "max_steps": 1,
+        },
+        headers=headers,
+    )
+    tid = created.json()["task_id"]
+
+    async with client.stream(
+        "GET",
+        f"/v1/chat/stream?task_id={tid}&token={app_settings.token}",
+        headers={"Host": "127.0.0.1:8000"},
+    ) as resp:
+        assert resp.status_code == 200
+        raw = (await resp.aread()).decode()
+
+    events = parse_sse_events(raw)
+    kinds = [event for event, _ in events]
+    assert "status" in kinds
+    assert "error" in kinds
+    assert "done" in kinds
+    error_payload = json.loads(next(data for event, data in events if event == "error"))
+    assert error_payload["code"] == "browser_error"
+    assert error_payload["message"] == "snapshot failed"
+    done_payload = json.loads(next(data for event, data in events if event == "done"))
+    assert done_payload["status"] == "failed"
 
 
 @pytest.mark.asyncio

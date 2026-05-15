@@ -34,6 +34,7 @@ async def create_task(
         body.goal,
         body.allowed_domains,
         owner_id=owner_id,
+        initial_messages=body.initial_messages,
         session_id=body.session_id,
         start_blocked_sleeper=body.start_blocked_sleeper,
         live_loop=body.start_agent_loop,

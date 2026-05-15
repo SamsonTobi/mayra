@@ -20,6 +20,13 @@ class ApprovalRegistry:
         return approval_id
 
     def complete(self, approval_id: str, *, approved: bool) -> None:
+        if approval_id.startswith("resume:"):
+            task_id = approval_id.removeprefix("resume:")
+            if task_id not in self._tasks.tasks:
+                raise LookupError(approval_id)
+            self._tasks.record_approval_decision(task_id, approved)
+            return
+
         task_id = self._pending.pop(approval_id, None)
         if task_id is None:
             raise LookupError(approval_id)

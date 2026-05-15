@@ -14,6 +14,7 @@ export function SiteNav() {
     >
       <Link href="/">Home</Link>
       <Link href="/chat">Chat</Link>
+      <Link href="/settings">Settings</Link>
       <Link href="/sessions">Sessions</Link>
       <Link href="/logs">Logs</Link>
     </nav>
