@@ -14,6 +14,7 @@ class TaskRecord:
     goal: str
     allowed_domains: list[str]
     owner_id: str
+    session_id: str | None = None
     messages: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     approval_event: asyncio.Event = field(default_factory=asyncio.Event)
     approval_decision: bool | None = None
@@ -40,12 +41,14 @@ class MemoryTaskRegistry:
         live_loop: bool = False,
         max_steps: int = 40,
         exhaust_budget_probe: bool = False,
+        session_id: str | None = None,
     ) -> str:
         tid = str(uuid.uuid4())
         rec = TaskRecord(
             goal=goal,
             allowed_domains=list(allowed_domains),
             owner_id=owner_id,
+            session_id=session_id,
             live_loop=live_loop,
             max_steps=max_steps,
             exhaust_budget_probe=exhaust_budget_probe,

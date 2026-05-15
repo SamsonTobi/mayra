@@ -149,3 +149,46 @@ async def test_schema_repair_then_success(client, app, app_settings):
     raw = await read_sse_body(client, app_settings, tid)
     done_data = json.loads(next(d for e, d in parse_sse_events(raw) if e == "done"))
     assert done_data["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_schema_repair_then_fail(client, app, app_settings):
+    app.state.model_client = FakeModelClient(scripted_replies=[_MALFORMED, _MALFORMED])
+    r = await client.post(
+        "/v1/tasks",
+        json={"goal": "x", "allowed_domains": ["example.com"], "start_agent_loop": True},
+        headers=auth_headers(app_settings.token),
+    )
+    tid = r.json()["task_id"]
+    raw = await read_sse_body(client, app_settings, tid)
+    done_data = json.loads(next(d for e, d in parse_sse_events(raw) if e == "done"))
+    assert done_data["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_uses_selected_browser_session(client, app, app_settings):
+    app.state.model_client = FakeModelClient(scripted_replies=[_VALID_CLICK])
+    connected = await client.post(
+        "/v1/sessions/connect",
+        json={"port": 9222},
+        headers=auth_headers(app_settings.token),
+    )
+    sid = connected.json()["session_id"]
+
+    r = await client.post(
+        "/v1/tasks",
+        json={
+            "goal": "x",
+            "allowed_domains": ["example.com"],
+            "session_id": sid,
+            "start_agent_loop": True,
+        },
+        headers=auth_headers(app_settings.token),
+    )
+    tid = r.json()["task_id"]
+    raw = await read_sse_body(client, app_settings, tid)
+    done_data = json.loads(next(d for e, d in parse_sse_events(raw) if e == "done"))
+
+    assert done_data["status"] == "success"
+    assert app.state.session_browser.executions
+    assert app.state.session_browser.executions[0][0] == sid

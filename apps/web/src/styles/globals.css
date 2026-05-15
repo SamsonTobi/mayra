@@ -117,7 +117,8 @@ button {
 textarea,
 input[type="text"],
 input[type="password"],
-input[type="url"] {
+input[type="url"],
+select {
   width: 100%;
   padding: 0.5rem 0.6rem;
   border-radius: 6px;

@@ -41,6 +41,7 @@ class FakeSessionBrowser:
     def __init__(self) -> None:
         self.opened: list[tuple[int, str]] = []
         self._ports: dict[str, int] = {}
+        self.executions: list[tuple[str, Any, list[str]]] = []
 
     async def run_doctor(self) -> dict[str, Any]:
         return {"ok": True, "fake": True}
@@ -54,7 +55,13 @@ class FakeSessionBrowser:
         n = 247
         return {
             "success": True,
-            "data": {"refs": {f"e{i}": {"role": "generic"} for i in range(n)}},
+            "nodes": [{"ref": "@e1", "role": "button", "name": "Ok"}],
+            "data": {
+                "refs": {
+                    **{"e1": {"role": "button", "name": "Ok"}},
+                    **{f"e{i}": {"role": "generic"} for i in range(2, n + 1)},
+                }
+            },
         }
 
     async def screenshot_png_bytes(self, session_id: str) -> bytes:
@@ -63,9 +70,16 @@ class FakeSessionBrowser:
         Image.new("RGB", (4, 4), color=(10, 20, 30)).save(buf, format="PNG")
         return buf.getvalue()
 
+    async def screenshot_annotated(self, session_id: str) -> tuple[bytes, str]:
+        return (await self.screenshot_png_bytes(session_id), "image/png")
+
+    async def execute(self, session_id: str, action: Any, cmds: list[str]) -> None:
+        self.executions.append((session_id, action, cmds))
+
     async def close_all(self) -> None:
         self._ports.clear()
         self.opened.clear()
+        self.executions.clear()
 
 
 @pytest.fixture

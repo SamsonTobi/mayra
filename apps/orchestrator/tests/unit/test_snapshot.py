@@ -43,3 +43,11 @@ def test_from_json_roundtrips_ref_and_role(snapshot_payload, node):
     assert n is not None
     assert n.role == "link"
     assert n.name == "Home"
+
+
+def test_from_json_accepts_agent_browser_refs_map():
+    snap = Snapshot.from_json({"data": {"refs": {"e1": {"role": "button", "name": "Sign in"}}}})
+    n = snap.find("@e1")
+    assert n is not None
+    assert n.role == "button"
+    assert n.name == "Sign in"

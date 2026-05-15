@@ -3,6 +3,8 @@ export type CreateTaskInput = {
   allowed_domains: string[];
   session_id?: string | null;
   start_blocked_sleeper?: boolean;
+  start_agent_loop?: boolean;
+  max_steps?: number;
 };
 
 export type CreateTaskResult = { task_id: string };

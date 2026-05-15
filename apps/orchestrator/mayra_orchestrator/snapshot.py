@@ -44,9 +44,35 @@ class Snapshot:
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> "Snapshot":
+        agent_refs = data.get("data", {}).get("refs") if isinstance(data.get("data"), dict) else None
+        if isinstance(agent_refs, dict):
+            built_refs: list[Node] = []
+            for raw_ref, raw_node in agent_refs.items():
+                if not isinstance(raw_node, dict):
+                    continue
+                ref = raw_ref if str(raw_ref).startswith("@") else f"@{raw_ref}"
+                built_refs.append(
+                    Node(
+                        ref=ref,
+                        role=raw_node.get("role", "") or "",
+                        name=raw_node.get("name", "") or raw_node.get("text", "") or "",
+                        text=raw_node.get("text", "") or "",
+                        tag=raw_node.get("tag"),
+                        input_type=raw_node.get("input_type"),
+                        in_form_with_money_or_account_action=bool(
+                            raw_node.get("in_form_with_money_or_account_action", False)
+                        ),
+                        is_password_or_otp=bool(raw_node.get("is_password_or_otp", False)),
+                    )
+                )
+            if built_refs:
+                return cls(nodes=tuple(built_refs))
+
         raw_nodes = data.get("nodes") or []
         built: list[Node] = []
         for n in raw_nodes:
+            if "ref" not in n:
+                continue
             built.append(
                 Node(
                     ref=n["ref"],

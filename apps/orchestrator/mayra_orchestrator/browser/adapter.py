@@ -226,15 +226,17 @@ class AgentBrowserAdapter:
         self._session_ports[session_id] = cdp_port
 
     async def snapshot(self, session_id: str) -> dict[str, Any]:
-        """Accessibility snapshot via CDP (read-only, no agent-browser subprocess)."""
-        if session_id not in self._session_ports:
-            raise BrowserError(f"unknown session {session_id!r} (call open first)")
-        port = self._session_ports[session_id]
-        result = await _cdp_call(port, "Accessibility.getFullAXTree")
-        nodes = result.get("nodes")
-        if not isinstance(nodes, list):
-            raise BrowserError("CDP Accessibility.getFullAXTree returned no nodes")
-        return {"nodes": nodes, "data": {"source": "cdp", "port": port}}
+        """Accessibility snapshot with agent-browser refs usable for later actions."""
+        payload = await self._exec(
+            *self._base(session_id),
+            "snapshot",
+            "--max-output",
+            "20000",
+            timeout=60.0,
+        )
+        if payload.get("success") is False:
+            raise BrowserError(str(payload.get("error") or payload))
+        return payload
 
     async def screenshot_png_bytes(self, session_id: str) -> bytes:
         """Capture viewport screenshot as PNG bytes via CDP."""
@@ -274,9 +276,13 @@ class AgentBrowserAdapter:
             tmp_path.unlink(missing_ok=True)
 
     async def execute(self, task_id: str, action: object, cmds: list[str]) -> None:
-        """Deferred to Phase 5 (validated action → agent-browser)."""
-        _ = (task_id, action, cmds)
-        raise BrowserError("execute() is not enabled until Phase 5")
+        """Execute a validated action command against the attached CDP session."""
+        _ = action
+        payload = await self._exec(*self._base(task_id), *cmds, timeout=120.0)
+        if payload.get("success") is False:
+            raise BrowserError(str(payload.get("error") or payload))
+        if "error" in payload:
+            raise BrowserError(str(payload["error"]))
 
     async def close_all(self) -> None:
         self._session_ports.clear()

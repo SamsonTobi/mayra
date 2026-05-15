@@ -26,10 +26,15 @@ async def create_task(
     owner_id: Annotated[str, Depends(get_effective_owner_id)],
 ) -> CreateTaskResponse:
     reg = request.app.state.registry
+    if body.start_agent_loop and body.session_id is not None:
+        sessions = request.app.state.browser_sessions.by_id
+        if body.session_id not in sessions:
+            raise HTTPException(status_code=404, detail="session not found")
     tid = reg.create(
         body.goal,
         body.allowed_domains,
         owner_id=owner_id,
+        session_id=body.session_id,
         start_blocked_sleeper=body.start_blocked_sleeper,
         live_loop=body.start_agent_loop,
         max_steps=body.max_steps,

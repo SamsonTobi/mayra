@@ -74,7 +74,8 @@ async def run_agent_loop(app: FastAPI, task_id: str, correlation_id: str) -> Non
 
 async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, rec: TaskRecord) -> None:
     approvals = app.state.approval_registry
-    browser = app.state.browser
+    browser = app.state.session_browser if rec.session_id else app.state.browser
+    browser_session_id = rec.session_id or task_id
     model = app.state.model_client
 
     budget = StepBudget(max_steps=rec.max_steps, remaining=rec.max_steps)
@@ -90,10 +91,10 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
         await _drain_user_messages(rec, history)
         step_no = rec.max_steps - budget.remaining
 
-        snap_dict = await browser.snapshot(task_id)
+        snap_dict = await browser.snapshot(browser_session_id)
         snapshot = Snapshot.from_json(snap_dict).prune()
 
-        shot = await browser.screenshot_annotated(task_id)
+        shot = await browser.screenshot_annotated(browser_session_id)
         if isinstance(shot, tuple) and len(shot) == 2:
             screenshot_bytes, screenshot_mime = shot[0], shot[1]
         elif isinstance(shot, bytes):
@@ -115,7 +116,7 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
         async def on_token(delta: str) -> None:
             await _put_sse(rec, "token", {"kind": "token", "delta": delta})
 
-        raw = await model.complete_streaming(bundle, temperature=0.0, on_token=on_token)
+        raw = await _complete_with_limits(app, model, bundle, on_token)
 
         while True:
             try:
@@ -128,7 +129,7 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
                     await _emit_error(rec, correlation_id, "repair_budget", "malformed action JSON")
                     await _emit_done(rec, task_id, "failed")
                     return
-                raw = await model.complete_streaming(bundle, temperature=0.0, on_token=on_token)
+                raw = await _complete_with_limits(app, model, bundle, on_token)
 
         history.append(f"assistant:{chat}")
 
@@ -161,7 +162,7 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
             await _emit_done(rec, task_id, "failed")
             return
 
-        await browser.execute(task_id, gated, cmds)
+        await browser.execute(browser_session_id, gated, cmds)
 
         ts = datetime.now(timezone.utc).isoformat()
         action_msg = {
@@ -189,6 +190,17 @@ async def _drain_user_messages(rec: TaskRecord, history: deque[str]) -> None:
         except asyncio.QueueEmpty:
             break
         history.append(f"user:{msg}")
+
+
+async def _complete_with_limits(app: FastAPI, model: Any, bundle: Any, on_token: Any) -> str:
+    provider = getattr(model, "provider", "")
+    limiter = getattr(app.state, "rate_limit", {}).get(provider)
+    semaphore = getattr(app.state, "semaphore", {}).get(provider)
+    if limiter is None or semaphore is None:
+        return await model.complete_streaming(bundle, temperature=0.0, on_token=on_token)
+    async with limiter:
+        async with semaphore:
+            return await model.complete_streaming(bundle, temperature=0.0, on_token=on_token)
 
 
 async def _put_sse(rec: TaskRecord, event: str, payload: dict[str, Any]) -> None:
