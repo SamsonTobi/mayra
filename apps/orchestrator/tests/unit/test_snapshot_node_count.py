@@ -56,21 +56,31 @@ async def test_open_probes_cdp_without_spawning_agent_browser_connect(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_snapshot_uses_direct_cdp(monkeypatch):
-    async def fake_cdp_call(cdp_port: int, method: str, params=None):
-        assert cdp_port == 9222
-        assert method == "Accessibility.getFullAXTree"
-        assert params is None
-        return {"nodes": [{"nodeId": "1"}, {"nodeId": "2"}]}
-
-    monkeypatch.setattr(adapter_module, "_cdp_call", fake_cdp_call)
+async def test_snapshot_uses_agent_browser_refs(monkeypatch):
     adapter = AgentBrowserAdapter()
     adapter._session_ports["sid"] = 9222
 
+    async def fake_exec(*argv: str, timeout: float):
+        assert timeout == 60.0
+        assert argv == (
+            "agent-browser",
+            "--cdp",
+            "9222",
+            "--session",
+            "sid",
+            "--json",
+            "snapshot",
+            "--max-output",
+            "20000",
+        )
+        return {"data": {"refs": {"e1": {"role": "button"}}}}
+
+    monkeypatch.setattr(adapter_module, "_require_agent_browser_exe", lambda: "agent-browser")
+    monkeypatch.setattr(adapter, "_exec", fake_exec)
+
     snap = await adapter.snapshot("sid")
 
-    assert snap["nodes"] == [{"nodeId": "1"}, {"nodeId": "2"}]
-    assert snap["data"] == {"source": "cdp", "port": 9222}
+    assert snap == {"data": {"refs": {"e1": {"role": "button"}}}}
 
 
 @pytest.mark.asyncio
