@@ -24,6 +24,16 @@ export type HealthzBody = {
   agent_browser_detail?: Record<string, unknown> | null;
 };
 
+export type ValidateSettingsInput = {
+  provider: "cloudflare" | "gemini" | "grok";
+  model: string;
+};
+
+export type ValidateSettingsResult = {
+  ok: boolean;
+  latency_ms: number;
+};
+
 /**
  * Thin fetch wrapper for the local orchestrator (see MAYRA_TECHNICAL_SPEC §3.4).
  * No secrets in NEXT_PUBLIC_* — port + token come from Tauri at runtime.
@@ -116,6 +126,21 @@ export class OrchestratorClient {
       throw new Error(`snapshotSession failed: ${r.status} ${t}`);
     }
     return (await r.json()) as SessionSnapshotResult;
+  }
+
+  async validateSettings(
+    input: ValidateSettingsInput,
+  ): Promise<ValidateSettingsResult> {
+    const r = await fetch(`${this.base()}/v1/settings/validate`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify(input),
+    });
+    if (!r.ok) {
+      const t = await this.errorBody(await r.text());
+      throw new Error(`validateSettings failed: ${r.status} ${t}`);
+    }
+    return (await r.json()) as ValidateSettingsResult;
   }
 
   async abort(taskId: string): Promise<void> {

@@ -115,7 +115,7 @@ What's missing for a **first-run desktop dev loop** was: committed web/desktop l
 
 **Acceptance demo:** on a local fixture HTML page (`tests/fixtures/sites/login.html`) the agent clicks `#sign-in` and reports success within 10 s.
 
-- [ ] **Provider key flow** — Settings UI calls `save_provider_key("gemini", key)` → keyring → sidecar restart with `MAYRA_PROVIDER_KEYS_BASE64`.
+- [x] **Provider key flow** — Settings UI calls `save_provider_key("gemini", key)` → keyring → sidecar restart with `MAYRA_PROVIDER_KEYS_BASE64`.
 - [ ] **`providers/base.py`** — `ModelClient` Protocol; **`providers/gemini.py`** — full `complete_streaming(prompt, on_token)` with vision + `inline_data` for WebP.
 - [ ] **Provider factory** `providers/factory.py` — one `httpx.AsyncClient` per provider in lifespan.
 - [ ] **Agent loop integration** — `run_agent_loop` consumes `ModelClient`, calls `parse_chat_and_action`, executes via `BrowserAdapter`, emits SSE events into the task queue.
@@ -198,6 +198,7 @@ What's missing for a **first-run desktop dev loop** was: committed web/desktop l
 Not blocking a release. Run when bored, between phases, or before public launch.
 
 ### Security audit (spec §10)
+
 - [ ] Host-header guard rejects external `Host`.
 - [ ] Token compared with `hmac.compare_digest`.
 - [ ] Provider keys never appear in any log file (grep test post-run).
@@ -206,12 +207,14 @@ Not blocking a release. Run when bored, between phases, or before public launch.
 - [ ] `MAYRA_PROVIDER_KEYS_BASE64` env var wiped after read.
 
 ### Performance budgets (spec §11)
+
 - [ ] Snapshot+screenshot parallel ≤ 600 ms p95.
 - [ ] Per-step total ≤ 3.5 s p95.
 - [ ] SSE first byte ≤ 800 ms after step start.
 - [ ] Sidecar boot ≤ 1.5 s.
 
 ### Observability completeness (spec §9)
+
 - [ ] Stable event names per Appendix B.
 - [ ] No `print()` anywhere in `mayra_orchestrator/`.
 - [ ] Coverage gates: Python ≥ 85 % branch, TS ≥ 80 %, Rust ≥ 70 %.
@@ -220,17 +223,17 @@ Not blocking a release. Run when bored, between phases, or before public launch.
 
 ## "Done already" snapshot
 
-| Suite | Count | Status |
-|--------|--------|--------|
-| Python unit (`tests/unit`) | 55 | ✅ |
-| Python provider (gemini respx) | 4 | ✅ |
-| Python contract (`tests/contract`) | 13 | ✅ |
-| Python integration (optional) | 5 | ⏸ need `agent-browser` + `MAYRA_INTEGRATION_CDP_PORT` |
-| TS contracts vitest (`packages/contracts`) | 28 | ✅ |
-| Contracts pytest (`mayra-contracts`) | 28 | ✅ |
-| TS web vitest (`apps/web`) | 15 | ✅ (after `npm --prefix apps/web install`) |
-| Desktop manifest (`apps/desktop`) | 3 | ✅ |
-| **Total green** | **151** | |
+| Suite                                      | Count   | Status                                                |
+| ------------------------------------------ | ------- | ----------------------------------------------------- |
+| Python unit (`tests/unit`)                 | 55      | ✅                                                    |
+| Python provider (gemini respx)             | 4       | ✅                                                    |
+| Python contract (`tests/contract`)         | 13      | ✅                                                    |
+| Python integration (optional)              | 5       | ⏸ need `agent-browser` + `MAYRA_INTEGRATION_CDP_PORT` |
+| TS contracts vitest (`packages/contracts`) | 28      | ✅                                                    |
+| Contracts pytest (`mayra-contracts`)       | 28      | ✅                                                    |
+| TS web vitest (`apps/web`)                 | 15      | ✅ (after `npm --prefix apps/web install`)            |
+| Desktop manifest (`apps/desktop`)          | 3       | ✅                                                    |
+| **Total green**                            | **151** |                                                       |
 
 Modules in tree:
 
@@ -275,20 +278,20 @@ When two agents need to touch the same file, prefer the **`wire(app)` seam** pat
 
 ## Appendix — original T-stage → Phase mapping (for spec cross-reference)
 
-| T-stage | Folded into |
-|---------|-------------|
-| T0 Repo scaffolding | done; remaining `.pre-commit-config.yaml` → Phase 8 (CI) |
-| T1 Contracts | done |
-| T2 Pure Python modules | done; follow-ups absorbed into Phase 6 |
-| T3 App skeleton | done; **structlog wiring → Phase 7** |
-| T4 Memory tasks + first contract surface | done |
-| T5 Agent loop | module exists; **wired in Phase 5** (success/abort/budget/repair) and Phase 6 (approval/risk) |
-| T6 Provider clients | gemini list_models done; **gemini streaming → Phase 5**, second provider → Phase 8 |
-| T7 agent-browser adapter | **Phase 3** (open/snapshot/screenshot), **Phase 5** (execute), **Phase 6** (policies/OTP/takeover) |
-| T8 Tauri shell | done; **chrome-probe → Phase 2**, **sidecar dev wiring → Phase 3**, **packaging → Phase 8** |
-| T9 Next.js UI | App Router done; **chat wiring → Phase 4**, **logs → Phase 7** |
-| T10 Supabase | **Phase 7** |
-| T11 Bench + packaging + CI | **Phase 8** |
+| T-stage                                  | Folded into                                                                                        |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| T0 Repo scaffolding                      | done; remaining `.pre-commit-config.yaml` → Phase 8 (CI)                                           |
+| T1 Contracts                             | done                                                                                               |
+| T2 Pure Python modules                   | done; follow-ups absorbed into Phase 6                                                             |
+| T3 App skeleton                          | done; **structlog wiring → Phase 7**                                                               |
+| T4 Memory tasks + first contract surface | done                                                                                               |
+| T5 Agent loop                            | module exists; **wired in Phase 5** (success/abort/budget/repair) and Phase 6 (approval/risk)      |
+| T6 Provider clients                      | gemini list_models done; **gemini streaming → Phase 5**, second provider → Phase 8                 |
+| T7 agent-browser adapter                 | **Phase 3** (open/snapshot/screenshot), **Phase 5** (execute), **Phase 6** (policies/OTP/takeover) |
+| T8 Tauri shell                           | done; **chrome-probe → Phase 2**, **sidecar dev wiring → Phase 3**, **packaging → Phase 8**        |
+| T9 Next.js UI                            | App Router done; **chat wiring → Phase 4**, **logs → Phase 7**                                     |
+| T10 Supabase                             | **Phase 7**                                                                                        |
+| T11 Bench + packaging + CI               | **Phase 8**                                                                                        |
 
 ---
 
