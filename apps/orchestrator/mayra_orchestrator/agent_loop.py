@@ -261,6 +261,10 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
                 await _emit_done(rec, task_id, "aborted")
                 return
 
+        if gated.action == "done":
+            await _emit_done(rec, task_id, "success")
+            return
+
         try:
             cmds = to_agent_browser_command(gated)
         except ActionValidationError as exc:
@@ -273,11 +277,8 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
         await _emit_action_log(rec, display_action, executed=True, step=step_no, screenshot_path=None)
         rec.last_observation_hash = observation_hash
 
-        if rec.exhaust_budget_probe:
-            continue
-
-        await _emit_done(rec, task_id, "success")
-        return
+        # Continue the loop for the next step (to let the model see the next screen)
+        continue
 
 
 async def _drain_user_messages(rec: TaskRecord, history: deque[str]) -> None:
