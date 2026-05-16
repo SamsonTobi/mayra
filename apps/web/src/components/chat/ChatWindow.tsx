@@ -32,7 +32,6 @@ export function ChatWindow() {
     done,
     failed,
     start,
-    reset,
     appendUserMessage,
     appendSystemMessage,
   } = useChatStream(port, token);
@@ -60,6 +59,14 @@ export function ChatWindow() {
       if (m.kind === "action_log" && m.screenshot_path) {
         return m.screenshot_path;
       }
+    }
+    return null;
+  }, [messages]);
+
+  const lastUserMessage = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m?.kind === "user") return m.text;
     }
     return null;
   }, [messages]);
@@ -111,11 +118,15 @@ export function ChatWindow() {
       sessionId,
       messages,
       start,
-      reset,
       appendUserMessage,
       appendSystemMessage,
     ],
   );
+
+  const onRetry = useCallback(() => {
+    if (!lastUserMessage) return;
+    void onSend(lastUserMessage);
+  }, [lastUserMessage, onSend]);
 
   const showDevApprovalInject =
     process.env.NEXT_PUBLIC_MAYRA_DEV_CHAT_TOOLS === "1";
@@ -185,7 +196,12 @@ export function ChatWindow() {
         </button>
       </div>
       {sessionError ? <div className="banner">{sessionError}</div> : null}
-      <MessageList messages={messages} port={port} token={token} />
+      <MessageList
+        messages={messages}
+        port={port}
+        token={token}
+        onRetry={lastUserMessage && sessionId ? onRetry : undefined}
+      />
       {awaitingAssistant ? (
         <p className="muted" style={{ margin: "0.5rem 0" }}>
           Waiting for the agent (browser snapshot + model)…

@@ -23,9 +23,9 @@ export function MessageApprovalRequest({
   const [open, setOpen] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [resolvedScreenshotSrc, setResolvedScreenshotSrc] = useState<string | null>(
-    screenshotSrc ?? null,
-  );
+  const [resolvedScreenshotSrc, setResolvedScreenshotSrc] = useState<
+    string | null
+  >(screenshotSrc ?? null);
 
   useEffect(() => {
     if (screenshotSrc) {
@@ -38,13 +38,19 @@ export function MessageApprovalRequest({
         const mod = await import("@tauri-apps/api/core");
         let pathForSrc = message.screenshot_path;
         try {
-          pathForSrc = await mod.invoke<string>("asset_url", { path: message.screenshot_path });
+          pathForSrc = await mod.invoke<string>("asset_url", {
+            path: message.screenshot_path,
+          });
         } catch {
           /* non-Tauri or path already asset-safe */
         }
-        if (!cancelled) setResolvedScreenshotSrc(mod.convertFileSrc(pathForSrc));
+        if (!cancelled && typeof window !== "undefined") {
+          setResolvedScreenshotSrc(mod.convertFileSrc(pathForSrc));
+        }
       } catch {
-        if (!cancelled) setResolvedScreenshotSrc(null);
+        if (!cancelled && typeof window !== "undefined") {
+          setResolvedScreenshotSrc(null);
+        }
       }
     })();
     return () => {

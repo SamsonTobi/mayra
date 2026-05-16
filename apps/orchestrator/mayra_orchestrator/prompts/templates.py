@@ -24,6 +24,8 @@ Output exactly two parts, separated by the literal token ===ACTION===:
 
 Rules:
 - Only use refs from the latest snapshot. Do NOT invent refs.
+  The `target_ref` MUST exactly match a ref from the ACCESSIBILITY TREE (e.g. "@e12") or be null.
+  Alternatively, you may use semantic locators like "role:button[name=Submit]", "text:Submit", or "label:Search".
 - Allowed action values are exactly: click, type, scroll, wait, navigate.
   Never output speak, answer, noop, or any other action.
 - Always include all required action fields: action, target_ref, value, risk, reason.

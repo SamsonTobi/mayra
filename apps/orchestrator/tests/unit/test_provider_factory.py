@@ -20,7 +20,11 @@ def test_decode_provider_keys_wipes_env(monkeypatch):
 
 
 def test_build_provider_runtime_creates_gemini_client_and_limiter(tmp_path):
-    raw = base64.b64encode(json.dumps({"gemini": "secret"}).encode()).decode()
+    raw = base64.b64encode(json.dumps({
+        "gemini": "secret",
+        "groq": "test-groq",
+        "cloudflare": "acc-id:test-cf"
+    }).encode()).decode()
     settings = AppSettings(
         token="test",
         data_dir=tmp_path,
@@ -29,7 +33,11 @@ def test_build_provider_runtime_creates_gemini_client_and_limiter(tmp_path):
 
     runtime = build_provider_runtime(settings)
 
-    assert set(runtime.clients) == {"gemini"}
-    assert set(runtime.rate_limit) == {"gemini"}
-    assert set(runtime.semaphore) == {"gemini"}
-    asyncio.run(runtime.clients["gemini"].aclose())
+    assert set(runtime.clients) == {"gemini", "groq", "cloudflare"}
+    assert set(runtime.rate_limit) == {"gemini", "groq", "cloudflare"}
+    assert set(runtime.semaphore) == {"gemini", "groq", "cloudflare"}
+    
+    assert runtime.clients["cloudflare"].model == "@cf/meta/llama-3.1-8b-instruct"
+    
+    for client in runtime.clients.values():
+        asyncio.run(client.aclose())

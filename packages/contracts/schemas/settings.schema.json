@@ -8,14 +8,14 @@
   "properties": {
     "provider": {
       "type": "string",
-      "enum": ["cloudflare", "gemini", "grok"]
+      "enum": ["cloudflare", "gemini", "groq"]
     },
     "model": { "type": "string", "minLength": 1, "maxLength": 120 },
     "temperature": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
     "fallback_provider": {
       "oneOf": [
         { "type": "null" },
-        { "type": "string", "enum": ["cloudflare", "gemini", "grok"] }
+        { "type": "string", "enum": ["cloudflare", "gemini", "groq"] }
       ]
     },
     "auto_submit_basic_forms": { "type": "boolean" },

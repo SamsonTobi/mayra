@@ -468,11 +468,22 @@ async def _emit_status(rec: TaskRecord, text: str, severity: str = "info") -> No
 
 
 async def _emit_error(rec: TaskRecord, correlation_id: str, code: str, message: str) -> None:
+    text = _sse_error_message(message)
     await _put_sse(
         rec,
         "error",
-        {"kind": "error", "code": code, "message": message, "correlation_id": correlation_id},
+        {"kind": "error", "code": code, "message": text, "correlation_id": correlation_id},
     )
+
+
+def _sse_error_message(message: object) -> str:
+    """Avoid emitting useless SSE errors like the literal string 'None' from str(None)."""
+    if message is None:
+        return "No detail was provided; check orchestrator logs."
+    text = str(message).strip()
+    if not text or text == "None":
+        return "No detail was provided; check orchestrator logs."
+    return text
 
 
 async def _emit_action_log(

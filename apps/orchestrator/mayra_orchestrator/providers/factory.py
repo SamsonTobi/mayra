@@ -13,6 +13,8 @@ from aiolimiter import AsyncLimiter
 
 from mayra_orchestrator.providers.base import ModelClient
 from mayra_orchestrator.providers.gemini import GeminiClient
+from mayra_orchestrator.providers.openai_compat import create_groq_client, create_cloudflare_client
+from mayra_orchestrator.providers.fallback import FallbackModelClient
 from mayra_orchestrator.settings import AppSettings
 
 
@@ -26,14 +28,25 @@ class ProviderRuntime:
 def build_provider_runtime(settings: AppSettings) -> ProviderRuntime:
     keys = decode_provider_keys(settings.provider_keys_base64)
     clients: dict[str, ModelClient] = {}
+    
+    http = httpx.AsyncClient()
 
     gemini_key = keys.get("gemini")
     if gemini_key:
         clients["gemini"] = GeminiClient(
-            http=httpx.AsyncClient(),
+            http=http,
             api_key=gemini_key,
             model=settings.default_model,
         )
+        
+    groq_key = keys.get("groq")
+    if groq_key:
+        clients["groq"] = create_groq_client(http, api_key=groq_key)
+        
+    cf_key = keys.get("cloudflare")
+    if cf_key and ":" in cf_key:
+        account_id, token = cf_key.split(":", 1)
+        clients["cloudflare"] = create_cloudflare_client(http, account_id=account_id, api_token=token)
 
     return ProviderRuntime(
         clients=clients,

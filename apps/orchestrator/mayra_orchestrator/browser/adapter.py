@@ -27,6 +27,56 @@ _CDP_CONNECT_TIMEOUT = 3.0
 _CDP_COMMAND_TIMEOUT = 10.0
 _CDP_MAX_WS_MESSAGE = 64 * 1024 * 1024
 _POLICY_PATH = Path(__file__).with_name("policies") / "mayra-default.json"
+_RETRYABLE_BROWSER_ERRORS = (
+    "connection attempt failed",
+    "connected host has failed to respond",
+    "timed out",
+    "timeout",
+    "connection refused",
+    "forcibly closed",
+    "no chrome devtools endpoint responded",
+    "winerror 10060",
+    "winerror 10054",
+)
+
+
+def _is_retryable_browser_error(exc: BrowserError) -> bool:
+    message = str(exc).lower()
+    return any(token in message for token in _RETRYABLE_BROWSER_ERRORS)
+
+
+def _agent_browser_failure_message(payload: dict[str, Any]) -> str:
+    """Human-readable error when agent-browser reports failure or omits detail."""
+    err = payload.get("error")
+    if isinstance(err, str) and err.strip():
+        val = err.strip()
+        if val == "None":
+            return json.dumps(payload, default=str)
+        return val
+    if err not in (None, "", False):
+        return str(err)
+    try:
+        clipped = json.dumps(payload, default=str)
+    except TypeError:
+        clipped = str(payload)
+    return clipped if len(clipped) <= 800 else f"{clipped[:800]}…"
+
+
+def _ensure_agent_browser_ok(payload: dict[str, Any]) -> None:
+    """Raise BrowserError if payload indicates failure; ignore null/empty `error` on success."""
+    if payload.get("success") is False:
+        raise BrowserError(_agent_browser_failure_message(payload))
+    err = payload.get("error")
+    if err is None or err is False:
+        return
+    if isinstance(err, str):
+        cleaned = err.strip()
+        if not cleaned or cleaned == "None":
+            return
+        raise BrowserError(cleaned)
+    if str(err).strip() == "None":
+        return
+    raise BrowserError(str(err))
 
 
 def _lookup_agent_browser_exe() -> str | None:
@@ -148,7 +198,14 @@ async def _cdp_call(cdp_port: int, method: str, params: dict[str, Any] | None = 
                 if message.get("id") != msg_id:
                     continue
                 if "error" in message:
-                    raise BrowserError(f"CDP {method} failed: {message['error']}")
+                    err_payload = message["error"]
+                    if err_payload not in (None, "", False):
+                        detail = (
+                            json.dumps(err_payload, default=str)
+                            if isinstance(err_payload, dict)
+                            else str(err_payload)
+                        )
+                        raise BrowserError(f"CDP {method} failed: {detail}")
                 result = message.get("result", {})
                 return result if isinstance(result, dict) else {}
     except (TimeoutError, WebSocketException, OSError, json.JSONDecodeError) as e:
@@ -211,7 +268,10 @@ class AgentBrowserAdapter:
         err = stderr.decode("utf-8", errors="replace").strip()
         out = stdout.decode("utf-8", errors="replace").strip()
         if proc.returncode != 0:
-            raise BrowserError(err or out or f"agent-browser exited {proc.returncode}")
+            msg = err or out or f"agent-browser exited {proc.returncode}"
+            if msg.strip() == "None":
+                msg = f"agent-browser exited {proc.returncode} with string 'None'"
+            raise BrowserError(msg)
 
         if not out:
             return {}
@@ -219,6 +279,16 @@ class AgentBrowserAdapter:
             return json.loads(out)
         except json.JSONDecodeError as e:
             raise BrowserError(f"agent-browser stdout is not JSON: {out[:500]!r}") from e
+
+    async def _exec_read(self, argv: list[str], *, timeout: float) -> dict[str, Any]:
+        for attempt in range(2):
+            try:
+                return await self._exec(*argv, timeout=timeout)
+            except BrowserError as exc:
+                if attempt == 0 and _is_retryable_browser_error(exc):
+                    await asyncio.sleep(0.4)
+                    continue
+                raise
 
     async def run_doctor(self) -> dict[str, Any]:
         """Run `agent-browser doctor --json` (non-fatal: orchestrator still boots)."""
@@ -242,25 +312,36 @@ class AgentBrowserAdapter:
 
     async def snapshot(self, session_id: str, allowed_domains: list[str] | None = None) -> dict[str, Any]:
         """Accessibility snapshot with agent-browser refs usable for later actions."""
-        payload = await self._exec(
-            *self._base(session_id, allowed_domains),
-            "snapshot",
-            timeout=60.0,
-        )
-        if payload.get("success") is False:
-            raise BrowserError(str(payload.get("error") or payload))
-        return payload
+        argv = [*self._base(session_id, allowed_domains), "snapshot"]
+        for attempt in range(2):
+            payload = await self._exec_read(argv, timeout=60.0)
+            if payload.get("success") is False:
+                err = BrowserError(_agent_browser_failure_message(payload))
+                if attempt == 0 and _is_retryable_browser_error(err):
+                    await asyncio.sleep(0.4)
+                    continue
+                raise err
+            return payload
+        return {}
 
     async def screenshot_png_bytes(self, session_id: str) -> bytes:
         """Capture viewport screenshot as PNG bytes via CDP."""
         if session_id not in self._session_ports:
             raise BrowserError(f"unknown session {session_id!r} (call open first)")
         port = self._session_ports[session_id]
-        result = await _cdp_call(
-            port,
-            "Page.captureScreenshot",
-            {"format": "png", "fromSurface": True},
-        )
+        for attempt in range(2):
+            try:
+                result = await _cdp_call(
+                    port,
+                    "Page.captureScreenshot",
+                    {"format": "png", "fromSurface": True},
+                )
+                break
+            except BrowserError as exc:
+                if attempt == 0 and _is_retryable_browser_error(exc):
+                    await asyncio.sleep(0.4)
+                    continue
+                raise
         encoded = result.get("data")
         if not isinstance(encoded, str) or not encoded:
             raise BrowserError("CDP Page.captureScreenshot returned no image data")
@@ -274,14 +355,17 @@ class AgentBrowserAdapter:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             tmp_path = Path(tmp.name)
         try:
-            payload = await self._exec(
-                *self._base(task_id, allowed_domains),
-                "screenshot",
-                str(tmp_path),
-                "--annotate",
+            payload = await self._exec_read(
+                [
+                    *self._base(task_id, allowed_domains),
+                    "screenshot",
+                    str(tmp_path),
+                    "--annotate",
+                ],
+                timeout=120.0,
             )
             if payload.get("success") is False:
-                raise BrowserError(str(payload.get("error") or payload))
+                raise BrowserError(_agent_browser_failure_message(payload))
             if not tmp_path.is_file():
                 raise BrowserError("annotated screenshot missing")
             return tmp_path.read_bytes(), "image/png"
@@ -291,11 +375,16 @@ class AgentBrowserAdapter:
     async def execute(self, task_id: str, action: object, cmds: list[str], allowed_domains: list[str] | None = None) -> None:
         """Execute a validated action command against the attached CDP session."""
         _ = action
-        payload = await self._exec(*self._base(task_id, allowed_domains), *cmds, timeout=120.0)
-        if payload.get("success") is False:
-            raise BrowserError(str(payload.get("error") or payload))
-        if "error" in payload:
-            raise BrowserError(str(payload["error"]))
+        for attempt in range(2):
+            try:
+                payload = await self._exec(*self._base(task_id, allowed_domains), *cmds, timeout=120.0)
+                _ensure_agent_browser_ok(payload)
+                return
+            except BrowserError as exc:
+                if attempt == 0 and _is_retryable_browser_error(exc):
+                    await asyncio.sleep(0.4)
+                    continue
+                raise
 
     async def close_all(self) -> None:
         self._session_ports.clear()

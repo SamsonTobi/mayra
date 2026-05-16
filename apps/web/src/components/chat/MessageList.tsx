@@ -11,9 +11,10 @@ type Props = {
   messages: ChatMessage[];
   port: number | null;
   token: string | null;
+  onRetry?: () => void;
 };
 
-export function MessageList({ messages, port, token }: Props) {
+export function MessageList({ messages, port, token, onRetry }: Props) {
   return (
     <div>
       {messages.map((m) => {
@@ -21,7 +22,7 @@ export function MessageList({ messages, port, token }: Props) {
         if (m.kind === "assistant")
           return <MessageAssistant key={m.id} message={m} />;
         if (m.kind === "system_status")
-          return <MessageSystemStatus key={m.id} message={m} />;
+          return <MessageSystemStatus key={m.id} message={m} onRetry={onRetry} />;
         if (m.kind === "action_log")
           return <MessageActionLog key={m.id} message={m} />;
         if (m.kind === "approval_request")

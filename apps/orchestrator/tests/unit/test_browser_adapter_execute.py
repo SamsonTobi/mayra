@@ -49,6 +49,22 @@ async def test_execute_uses_validated_command_tokens(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_execute_ignores_null_error_field_when_success(monkeypatch):
+    """agent-browser sometimes includes `"error": null` alongside success — do not treat as failure."""
+    adapter = AgentBrowserAdapter()
+    adapter._session_ports["session-1"] = 9222
+
+    async def fake_exec(*argv: str, timeout: float) -> dict[str, object]:
+        _ = (argv, timeout)
+        return {"success": True, "error": None}
+
+    monkeypatch.setattr("mayra_orchestrator.browser.adapter._require_agent_browser_exe", lambda: "agent-browser")
+    monkeypatch.setattr(adapter, "_exec", fake_exec)
+
+    await adapter.execute("session-1", object(), ["click", "@e1"])
+
+
+@pytest.mark.asyncio
 async def test_execute_raises_on_agent_browser_error(monkeypatch):
     adapter = AgentBrowserAdapter()
     adapter._session_ports["session-1"] = 9222

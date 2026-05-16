@@ -189,10 +189,19 @@ export function reduceChatStreamEvent(
         code?: string;
         correlation_id?: string;
       };
+      const rawMsg = payload.message;
+      const msg =
+        rawMsg != null &&
+        String(rawMsg).trim() !== "" &&
+        String(rawMsg) !== "None"
+          ? String(rawMsg)
+          : String(data ?? "").trim() !== ""
+            ? String(data)
+            : "(no error detail)";
       finalized.push({
         id: newId("err"),
         kind: "system_status",
-        text: `${payload.code ?? "error"}: ${payload.message ?? data}`,
+        text: `${payload.code ?? "error"}: ${msg}`,
         severity: "error",
         ts: nowIso(),
       });

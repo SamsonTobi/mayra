@@ -18,6 +18,7 @@ from mayra_orchestrator.api.schemas import (
 )
 from mayra_orchestrator.browser.adapter import AgentBrowserAdapter, snapshot_node_count
 from mayra_orchestrator.browser.preview_image import save_png_as_preview_webp
+from mayra_orchestrator.errors import BrowserError
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"], dependencies=[Depends(require_bearer)])
 
@@ -83,8 +84,16 @@ async def snapshot_session(
     if rec is None:
         raise HTTPException(status_code=404, detail="session not found")
 
-    snap = await browser.snapshot(session_id)
-    png = await browser.screenshot_png_bytes(session_id)
+    try:
+        snap = await browser.snapshot(session_id)
+        png = await browser.screenshot_png_bytes(session_id)
+    except BrowserError:
+        try:
+            await browser.open(rec.cdp_port, session_id)
+            snap = await browser.snapshot(session_id)
+            png = await browser.screenshot_png_bytes(session_id)
+        except BrowserError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
     n = snapshot_node_count(snap)
     rec.step += 1
     rec.last_snapshot = snap

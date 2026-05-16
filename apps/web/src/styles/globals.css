@@ -152,6 +152,9 @@ select {
 }
 
 .system-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   font-size: 0.85rem;
   color: var(--muted);
   margin: 0.35rem 0;
@@ -162,6 +165,27 @@ select {
 }
 .system-row.error {
   color: #f87171;
+}
+
+.system-row-text {
+  line-height: 1.4;
+}
+
+.retry-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #151922;
+  color: inherit;
+}
+
+.retry-button:hover {
+  border-color: #3b82f6;
+  color: #93c5fd;
 }
 
 .modal-backdrop {

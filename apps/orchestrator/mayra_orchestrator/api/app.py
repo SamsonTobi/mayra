@@ -116,8 +116,21 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.state.providers = provider_runtime.clients
     app.state.rate_limit = provider_runtime.rate_limit
     app.state.semaphore = provider_runtime.semaphore
-    if "gemini" in provider_runtime.clients:
-        app.state.model_client = provider_runtime.clients["gemini"]
+    
+    # Bundle all available clients into the fallback mechanism
+    if provider_runtime.clients:
+        from mayra_orchestrator.providers.fallback import FallbackModelClient
+        # Order them based on some arbitrary preference if multiple exist, e.g. Gemini -> Groq -> Cloudflare
+        ordered = []
+        for p in ["gemini", "groq", "cloudflare"]:
+            if p in provider_runtime.clients:
+                ordered.append(provider_runtime.clients[p])
+        for p, client in provider_runtime.clients.items():
+            if p not in ["gemini", "groq", "cloudflare"]:
+                ordered.append(client)
+                
+        app.state.model_client = FallbackModelClient(ordered)
+        
     app.state.browser_sessions = SessionBucket()
     app.state.session_browser = AgentBrowserAdapter(data_dir=settings.data_dir)
 
