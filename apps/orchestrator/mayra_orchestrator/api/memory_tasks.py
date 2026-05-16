@@ -16,6 +16,7 @@ class TaskRecord:
     owner_id: str
     initial_messages: list[str] = field(default_factory=list)
     session_id: str | None = None
+    provider: str | None = None
     messages: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     approval_event: asyncio.Event = field(default_factory=asyncio.Event)
     approval_decision: bool | None = None
@@ -45,6 +46,7 @@ class MemoryTaskRegistry:
         max_steps: int = 40,
         exhaust_budget_probe: bool = False,
         session_id: str | None = None,
+        provider: str | None = None,
     ) -> str:
         tid = str(uuid.uuid4())
         rec = TaskRecord(
@@ -53,6 +55,7 @@ class MemoryTaskRegistry:
             owner_id=owner_id,
             initial_messages=list(initial_messages or []),
             session_id=session_id,
+            provider=provider,
             live_loop=live_loop,
             max_steps=max_steps,
             exhaust_budget_probe=exhaust_budget_probe,

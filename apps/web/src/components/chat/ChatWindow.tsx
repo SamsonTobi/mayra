@@ -72,7 +72,7 @@ export function ChatWindow() {
   }, [messages]);
 
   const onSend = useCallback(
-    async (text: string) => {
+    async (text: string, provider: string) => {
       if (!client) return;
       const trimmed = text.trim();
       if (!trimmed) return;
@@ -99,6 +99,7 @@ export function ChatWindow() {
           allowed_domains: ["example.com"],
           initial_messages: initialMessages,
           session_id: sessionId || null,
+          provider: provider || null,
           start_agent_loop: true,
           max_steps: 3,
         });
@@ -125,7 +126,7 @@ export function ChatWindow() {
 
   const onRetry = useCallback(() => {
     if (!lastUserMessage) return;
-    void onSend(lastUserMessage);
+    void onSend(lastUserMessage, "");
   }, [lastUserMessage, onSend]);
 
   const showDevApprovalInject =

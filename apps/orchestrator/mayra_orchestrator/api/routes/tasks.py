@@ -36,6 +36,7 @@ async def create_task(
         owner_id=owner_id,
         initial_messages=body.initial_messages,
         session_id=body.session_id,
+        provider=body.provider,
         start_blocked_sleeper=body.start_blocked_sleeper,
         live_loop=body.start_agent_loop,
         max_steps=body.max_steps,

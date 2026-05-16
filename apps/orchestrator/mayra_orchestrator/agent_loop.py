@@ -21,6 +21,7 @@ from mayra_orchestrator.errors import (
     ActionValidationError,
     BudgetExhaustedError,
     MayraError,
+    ProviderError,
     SchemaRepairableError,
 )
 from mayra_orchestrator.parser import parse_chat_and_action
@@ -192,7 +193,7 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
         )
 
         chat_stream = _ChatReplyStreamer(rec)
-        raw = await _complete_with_limits(app, model, bundle, chat_stream.on_token)
+        raw = await _complete_with_limits(app, model, bundle, chat_stream.on_token, rec)
 
         while True:
             try:
@@ -220,7 +221,7 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
                     invalid_output=raw,
                     validation_error=str(exc),
                 )
-                raw = await _complete_with_limits(app, model, repair_bundle, _discard_token)
+                raw = await _complete_with_limits(app, model, repair_bundle, _discard_token, rec)
 
         await chat_stream.emit_chat(chat)
         history.append(f"assistant:{chat}")
@@ -430,15 +431,61 @@ async def _discard_token(delta: str) -> None:
     _ = delta
 
 
-async def _complete_with_limits(app: FastAPI, model: Any, bundle: Any, on_token: Any) -> str:
-    provider = getattr(model, "provider", "")
-    limiter = getattr(app.state, "rate_limit", {}).get(provider)
-    semaphore = getattr(app.state, "semaphore", {}).get(provider)
-    if limiter is None or semaphore is None:
+async def _complete_with_limits(app: FastAPI, model: Any, bundle: Any, on_token: Any, rec: TaskRecord) -> str:
+    # If the user specified a provider, use it. Otherwise, use all available as fallbacks.
+    providers = []
+    app_providers = getattr(app.state, "providers", {})
+    if getattr(rec, "provider", None):
+        preferred = app_providers.get(rec.provider)
+        if preferred:
+            providers.append(preferred)
+    
+    if not providers:
+        # Fall back through all available
+        ordered = []
+        for p in ["gemini", "groq", "cloudflare"]:
+            if p in app_providers:
+                ordered.append(app_providers[p])
+        for p, client in app_providers.items():
+            if p not in ["gemini", "groq", "cloudflare"]:
+                ordered.append(client)
+        providers = ordered
+
+    if not providers:
         return await model.complete_streaming(bundle, temperature=0.0, on_token=on_token)
-    async with limiter:
-        async with semaphore:
-            return await model.complete_streaming(bundle, temperature=0.0, on_token=on_token)
+
+    last_error: Exception | None = None
+    original_streamer = on_token.__self__ if hasattr(on_token, "__self__") else None
+
+    for client in providers:
+        provider_name = client.provider
+        limiter = getattr(app.state, "rate_limit", {}).get(provider_name)
+        semaphore = getattr(app.state, "semaphore", {}).get(provider_name)
+        
+        # Reset the streamer state for fallback attempts
+        if original_streamer and hasattr(original_streamer, "_buffer"):
+            original_streamer._buffer = ""
+            original_streamer._closed = False
+            original_streamer.emitted = False
+
+        try:
+            if limiter is None or semaphore is None:
+                return await client.complete_streaming(bundle, temperature=0.0, on_token=on_token)
+            async with limiter:
+                async with semaphore:
+                    return await client.complete_streaming(bundle, temperature=0.0, on_token=on_token)
+        except ProviderError as e:
+            # Fall back on rate_limited or 5xx server errors
+            err_str = str(e.args[0]) if e.args else ""
+            if "rate_limited" in err_str or "server_error" in err_str:
+                last_error = e
+                continue
+            raise
+
+    if last_error:
+        raise last_error
+
+    raise ProviderError("system_error:no_clients_succeeded")
 
 
 async def _put_sse(rec: TaskRecord, event: str, payload: dict[str, Any]) -> None:

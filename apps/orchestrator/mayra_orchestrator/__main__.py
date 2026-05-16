@@ -42,6 +42,10 @@ def _parse_cli() -> tuple[int, str, Path]:
 
 
 def main() -> None:
+    if sys.platform == "win32":
+        import asyncio
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        
     port, token, data_dir = _parse_cli()
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "screenshots").mkdir(parents=True, exist_ok=True)

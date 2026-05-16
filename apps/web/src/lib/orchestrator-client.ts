@@ -3,6 +3,7 @@ export type CreateTaskInput = {
   allowed_domains: string[];
   initial_messages?: string[];
   session_id?: string | null;
+  provider?: string | null;
   start_blocked_sleeper?: boolean;
   start_agent_loop?: boolean;
   max_steps?: number;

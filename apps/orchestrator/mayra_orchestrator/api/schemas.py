@@ -15,6 +15,7 @@ class CreateTaskRequest(StrictModel):
     allowed_domains: list[str]
     initial_messages: list[str] = Field(default_factory=list, max_length=24)
     session_id: str | None = None
+    provider: str | None = None
     start_blocked_sleeper: bool = False
     start_agent_loop: bool = False
     max_steps: int = Field(default=40, ge=1, le=256)
@@ -36,7 +37,7 @@ class ApproveRequest(StrictModel):
 
 
 class ValidateSettingsRequest(StrictModel):
-    provider: Literal["cloudflare", "gemini", "grok"]
+    provider: Literal["cloudflare", "gemini", "groq"]
     model: str
 
 
