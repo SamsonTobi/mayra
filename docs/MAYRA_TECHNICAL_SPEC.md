@@ -396,9 +396,8 @@ mayra/
         providers/
           __init__.py
           base.py              # ModelClient Protocol
-          cloudflare.py
           gemini.py
-          grok.py
+          openai_compat.py     # Groq + Cloudflare (OpenAI-compat REST)
           factory.py
         browser/
           __init__.py
@@ -680,10 +679,10 @@ The contracts package is the only place action/event/message schemas live. Both 
     "additionalProperties":false,
     "required":["provider","model","temperature"],
     "properties":{
-      "provider":{"enum":["cloudflare","gemini","grok"]},
+      "provider":{"enum":["cloudflare","gemini","groq"]},
       "model":{"type":"string","minLength":1,"maxLength":120},
       "temperature":{"type":"number","minimum":0.0,"maximum":1.0},
-      "fallback_provider":{"enum":["cloudflare","gemini","grok",null]},
+      "fallback_provider":{"enum":["cloudflare","gemini","groq",null]},
       "auto_submit_basic_forms":{"type":"boolean"},
       "headed":{"type":"boolean"},
       "step_budget":{"type":"integer","minimum":5,"maximum":80},
@@ -1503,7 +1502,7 @@ STEP {step}/{max_steps}.
 Image attachment depends on provider:
 
 - **Gemini**: `inline_data: { mime_type: "image/webp", data: base64 }`.
-- **Grok (xAI)**: `image_url: { url: "data:image/webp;base64,..." }` per OpenAI-compat schema.
+- **Groq**: `image_url: { url: "data:image/webp;base64,..." }` per OpenAI-compat schema.
 - **Cloudflare Workers AI** (`@cf/llava-1.5-7b-hf` or `@cf/meta/llama-3.2-11b-vision-instruct`): `image: [...bytes]` per CF schema.
 
 Provider clients abstract this.
@@ -1562,9 +1561,9 @@ class ModelClient(Protocol):
 
 ### 6.2 Three adapters
 
-- `cloudflare.py` — POST `https://api.cloudflare.com/client/v4/accounts/{acct}/ai/run/{model}` with `Authorization: Bearer <api_token>`, body `{ messages, image:[...bytes], stream:true }`. Parses SSE.
+- `openai_compat.py` (Cloudflare) — POST `https://api.cloudflare.com/client/v4/accounts/{acct}/ai/v1/chat/completions` with `Authorization: Bearer <api_token>`, OpenAI-compat body `{ messages, …, stream:true }`. Parses SSE.
 - `gemini.py` — uses `google.generativeai.GenerativeModel(model).generate_content_async(..., stream=True)`. Wrap to surface deltas.
-- `grok.py` — POST `https://api.x.ai/v1/chat/completions` (OpenAI-compat), `stream:true`.
+- `openai_compat.py` (Groq) — POST `https://api.groq.com/openai/v1/chat/completions` (OpenAI-compat), `stream:true`.
 
 All three:
 
@@ -2014,7 +2013,7 @@ Unhandled exceptions in the agent loop log via `log.exception` and emit a `syste
 - Never `await` Supabase between perception and action. All writes go through `asyncio.create_task` + a bounded `asyncio.Queue` consumed by a writer task.
 - Use `orjson.dumps`/`loads` everywhere; never the stdlib `json` in the loop.
 - `FastAPI(default_response_class=ORJSONResponse)` to skip the default encoder.
-- Screenshot to WebP quality 75 (≈ 70-90 KB for 1280×720 vs. 2–5 MB PNG). Resize to max 1280 px on long edge before encoding when targeting vision LLMs (Gemini caps image tokens, Grok prefers ≤ 4MP).
+- Screenshot to WebP quality 75 (≈ 70-90 KB for 1280×720 vs. 2–5 MB PNG). Resize to max 1280 px on long edge before encoding when targeting vision LLMs (Gemini caps image tokens; Groq vision limits depend on the chosen model).
 - Snapshot JSON: prune accessibility tree to nodes with role in `{button,link,textbox,combobox,checkbox,radio,switch,menuitem,tab,heading,group,form}` + their direct ancestors. Cap depth at 12. Cap to 1500 nodes; if exceeded, take a second snapshot focused on the visible viewport.
 - History compaction: keep last 8 messages verbatim; truncate older. If prompt exceeds 12k chars, drop oldest pairs until it fits. No second-model summarizer in v1 (see §A.11).
 - Concurrency: one `httpx.AsyncClient` per provider in `app.state.providers`. HTTP/1.1 in v1 (§A.15); revisit only if a provider is the latency bottleneck.
@@ -2177,7 +2176,7 @@ Use **§B.7** (TDD-aligned stages T0–T11) as the actual build order. The numbe
 3. **Stage 2**: orchestrator skeleton with `/healthz`, settings, lifespan, auth dependency, error handler. Run `uv run mayra-orchestrator --port 8765 --token <dummy> --log-dir /tmp` and `curl /healthz`.
 4. **Stage 3**: Tauri shell + sidecar plumbing (`start_sidecar`, secure-store commands, capabilities). Confirm `pnpm tauri dev` launches the orchestrator and shows `orchestrator-ready`.
 5. **Stage 4**: Next.js UI shell — onboarding, settings, chat scaffold. Wire `OrchestratorClient` + SSE consumer (no real loop yet).
-6. **Stage 5**: provider clients (start with Gemini, then Grok, then Cloudflare). Implement `complete_streaming`, `health_check`. Settings → "Validate" button works.
+6. **Stage 5**: provider clients (start with Gemini, then Groq, then Cloudflare). Implement `complete_streaming`, `health_check`. Settings → "Validate" button works.
 7. **Stage 6**: agent-browser adapter — `doctor`, `open`, `snapshot`, `screenshot_annotated`, `execute`, `close_all`. Test with a static fixture site.
 8. **Stage 7**: action mapper, risk classifier, redaction. Unit tests green.
 9. **Stage 8**: full agent loop with SSE streaming. Manual e2e: "navigate to example.com and click the link".
@@ -2285,7 +2284,7 @@ sidecar.boot sidecar.shutdown sidecar.crash
 | --                   | --                                           | --                                                   |
 | Cloudflare Workers AI| `@cf/meta/llama-3.2-11b-vision-instruct`     | Free-tier rate ≈ 10 rpm; vision input as bytes.      |
 | Google Gemini        | `gemini-2.5-flash`                           | Inline WebP; streaming on by default.                |
-| xAI Grok             | `grok-2-vision-1212` (or current vision SKU) | OpenAI-compat schema; data-URL image input.          |
+| Groq                 | `meta-llama/llama-4-scout-17b-16e-instruct` (default; user-overridable) | Vision-capable for screenshots; text-only Groq models return 400 on multimodal requests. OpenAI-compat at `api.groq.com`. |
 
 `throttle_rpm` default = 11 (just under the 12 rpm free-tier ceiling).
 

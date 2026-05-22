@@ -173,7 +173,7 @@ What's missing for a **first-run desktop dev loop** was: committed web/desktop l
 
 ## Phase 8 — Packaging + extra providers + bench
 
-**Goal:** A signed-ish NSIS installer that another machine can run; second provider (Grok or Cloudflare) wired; bench runner executing 5 fixture tasks.
+**Goal:** A signed-ish NSIS installer that another machine can run; second provider (Groq or Cloudflare) wired; bench runner executing 5 fixture tasks.
 
 **Acceptance demo:** install `mayra-setup.exe` on a clean Windows VM → run one benchmark → installer reports success.
 
@@ -182,7 +182,7 @@ What's missing for a **first-run desktop dev loop** was: committed web/desktop l
 - [ ] **`scripts/release-pipeline.mjs`** — contracts codegen → next build → pyinstaller → tauri build.
 - [ ] **`pnpm tauri build`** produces NSIS `-setup.exe`.
 - [ ] **Second provider** — pick **one** of:
-  - [ ] `providers/grok.py` (OpenAI-compat, data-URL image, streaming) + 4 respx tests.
+  - [ ] `providers/openai_compat.py` Groq path (OpenAI-compat, data-URL image, streaming) + respx tests.
   - [ ] `providers/cloudflare.py` (`@cf/meta/llama-3.2-11b-vision-instruct`, byte image) + 4 respx tests.
 - [ ] **Bench**:
   - [ ] `bench/runner.py` (spec §13.2) writing to `evaluations`.

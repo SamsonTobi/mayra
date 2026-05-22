@@ -5,7 +5,7 @@
 **Product Name:** Mayra  
 **Mission:** To serve as an active, localized digital collaborator capable of autonomously navigating complex, dynamic web interfaces via visual understanding.  
 **Form Factor:** A native, standalone desktop application built with Tauri (Next.js static export frontend) and backed by a local Python orchestration service.  
-**Core Technologies:** Multi-Model AI (Cloudflare Workers AI, Gemini, Grok), `agent-browser` (CDP-based rendering/action), Tauri + Next.js (UI), Python FastAPI (Orchestration Engine), Supabase Cloud (Database).
+**Core Technologies:** Multi-Model AI (Cloudflare Workers AI, Gemini, Groq), `agent-browser` (CDP-based rendering/action), Tauri + Next.js (UI), Python FastAPI (Orchestration Engine), Supabase Cloud (Database).
 
 ## 2. Rationale & Academic Context
 
@@ -38,7 +38,7 @@ Mayra utilizes a decoupled, local-first hybrid architecture:
 
 - **Model Agnosticism (BYOK):** Mayra avoids vendor lock-in by allowing users to bring their own AI configuration. Supported options include:
   - **Cloudflare Workers AI:** Users can select open-source models (e.g., Llama 3 Vision) hosted on Cloudflare's edge network.
-  - **Google Gemini & xAI Grok:** Users can enter their own API keys for direct access to proprietary models like Gemini Flash/Pro and Grok.
+  - **Google Gemini & Groq:** Users can enter their own API keys for direct access to models like Gemini Flash/Pro and Groq Cloud LLMs.
 - **Model Selection UX:** The Settings panel exposes a Model Provider dropdown with per-provider configuration (model name, region, safety level, and API key). The app validates the config with a lightweight health check (list-models or a 1-token prompt) before enabling it. The last-used model is stored locally and can be overridden per task.
 - **Credential Handling:** API keys are stored locally (Tauri secure store) and never synced to Supabase. The backend reads them on demand and keeps them in memory only for the duration of the request.
 - **LLM Interface Abstraction:** The Python FastAPI backend utilizes an abstraction layer (e.g., LiteLLM) to standardize schemas across different model APIs, ensuring seamless interoperability.
