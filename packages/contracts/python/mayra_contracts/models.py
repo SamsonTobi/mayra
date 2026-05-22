@@ -65,6 +65,9 @@ class AssistantMessage(BaseModel):
     markdown: str = Field(max_length=128000)
     ts: str
     streaming: bool | None = None
+    provider: str | None = Field(default=None, min_length=1, max_length=64)
+    model: str | None = Field(default=None, min_length=1, max_length=120)
+    observation_screenshot_path: str | None = Field(default=None, min_length=1)
 
 
 class SystemStatusMessage(BaseModel):
@@ -181,10 +184,10 @@ class ApprovalDecision(BaseModel):
 class SettingsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    provider: Literal["cloudflare", "gemini", "grok"]
+    provider: Literal["cloudflare", "gemini", "groq"]
     model: str = Field(min_length=1, max_length=120)
     temperature: float = Field(ge=0.0, le=1.0)
-    fallback_provider: Literal["cloudflare", "gemini", "grok"] | None = None
+    fallback_provider: Literal["cloudflare", "gemini", "groq"] | None = None
     auto_submit_basic_forms: bool | None = None
     headed: bool | None = None
     step_budget: int | None = Field(default=None, ge=5, le=80)

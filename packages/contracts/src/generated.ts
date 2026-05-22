@@ -53,6 +53,9 @@ export type ChatMessage =
       markdown: string;
       ts: string;
       streaming?: boolean;
+      provider?: string;
+      model?: string;
+      observation_screenshot_path?: string;
     }
   | SystemStatusMessage
   | ActionLogMessage
@@ -124,10 +127,10 @@ export interface ApprovalDecision {
 
 // --- settings.schema.json ---
 export interface SettingsConfig {
-  provider: 'cloudflare' | 'gemini' | 'grok';
+  provider: 'cloudflare' | 'gemini' | 'groq';
   model: string;
   temperature: number;
-  fallback_provider?: null | ('cloudflare' | 'gemini' | 'grok');
+  fallback_provider?: null | ('cloudflare' | 'gemini' | 'groq');
   auto_submit_basic_forms?: boolean;
   headed?: boolean;
   step_budget?: number;

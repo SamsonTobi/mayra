@@ -30,6 +30,10 @@ class TaskMessageRequest(StrictModel):
     text: str
 
 
+class ContinueTaskRequest(StrictModel):
+    additional_steps: int = Field(default=25, ge=1, le=256)
+
+
 class ApproveRequest(StrictModel):
     approval_id: str
     decision: Literal["approve", "reject"]
@@ -70,6 +74,12 @@ class SessionSummary(StrictModel):
 
 
 class SessionSnapshotResponse(StrictModel):
+    node_count: int
+    screenshot_path: str
+
+
+class ConnectAndVerifyResponse(StrictModel):
+    session_id: str
     node_count: int
     screenshot_path: str
 

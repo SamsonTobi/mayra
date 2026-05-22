@@ -64,7 +64,10 @@
         "kind": { "const": "assistant" },
         "markdown": { "type": "string", "maxLength": 128000 },
         "ts": { "type": "string", "format": "date-time" },
-        "streaming": { "type": "boolean" }
+        "streaming": { "type": "boolean" },
+        "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "model": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "observation_screenshot_path": { "type": "string", "minLength": 1 }
       }
     },
     { "$ref": "#/$defs/SystemStatusMessage" },
