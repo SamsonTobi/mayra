@@ -15,6 +15,10 @@ from mayra_orchestrator.providers.base import TokenCallback
 
 _TIMEOUT = httpx.Timeout(connect=5.0, read=60.0, write=15.0, pool=5.0)
 
+# Text-only Groq models return 400 if the agent sends screenshots (multimodal content).
+# See https://console.groq.com/docs/vision
+DEFAULT_GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+
 class OpenAICompatClient:
     def __init__(
         self,
@@ -81,7 +85,11 @@ class OpenAICompatClient:
                     raise ProviderError("rate_limited")
                 if response.status_code >= 500:
                     raise ProviderError(f"server_error:{response.status_code}")
-                response.raise_for_status()
+                if response.status_code >= 400:
+                    detail = (await response.aread()).decode("utf-8", errors="replace")[:2000]
+                    raise ProviderError(
+                        f"client_error:{response.status_code}:{detail or response.reason_phrase}"
+                    )
 
                 chunks: list[str] = []
                 async for line in response.aiter_lines():
@@ -139,7 +147,11 @@ class OpenAICompatClient:
                 chunks.append(delta["content"])
         return "".join(chunks)
 
-def create_groq_client(http: httpx.AsyncClient, api_key: str, model: str = "llama-3.1-8b-instant") -> OpenAICompatClient:
+def create_groq_client(
+    http: httpx.AsyncClient,
+    api_key: str,
+    model: str = DEFAULT_GROQ_VISION_MODEL,
+) -> OpenAICompatClient:
     return OpenAICompatClient(
         provider="groq",
         http=http,

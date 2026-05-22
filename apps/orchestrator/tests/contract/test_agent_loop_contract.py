@@ -39,7 +39,12 @@ async def test_agent_loop_success_stream_done(client, app, app_settings):
     app.state.model_client = FakeModelClient(scripted_replies=[_VALID_CLICK])
     r = await client.post(
         "/v1/tasks",
-        json={"goal": "x", "allowed_domains": ["example.com"], "start_agent_loop": True},
+        json={
+            "goal": "x",
+            "allowed_domains": ["example.com"],
+            "start_agent_loop": True,
+            "max_steps": 1,
+        },
         headers=auth_headers(app_settings.token),
     )
     assert r.status_code == 200
@@ -65,7 +70,12 @@ async def test_agent_loop_high_risk_stream_includes_approval_event(client, app, 
 
     r = await client.post(
         "/v1/tasks",
-        json={"goal": "x", "allowed_domains": ["example.com"], "start_agent_loop": True},
+        json={
+            "goal": "x",
+            "allowed_domains": ["example.com"],
+            "start_agent_loop": True,
+            "max_steps": 1,
+        },
         headers=auth_headers(app_settings.token),
     )
     tid = r.json()["task_id"]
@@ -233,7 +243,12 @@ async def test_schema_repair_then_success(client, app, app_settings):
     app.state.model_client = FakeModelClient(scripted_replies=[_MALFORMED, _VALID_CLICK])
     r = await client.post(
         "/v1/tasks",
-        json={"goal": "x", "allowed_domains": ["example.com"], "start_agent_loop": True},
+        json={
+            "goal": "x",
+            "allowed_domains": ["example.com"],
+            "start_agent_loop": True,
+            "max_steps": 1,
+        },
         headers=auth_headers(app_settings.token),
     )
     tid = r.json()["task_id"]
@@ -247,7 +262,12 @@ async def test_schema_repair_then_fail(client, app, app_settings):
     app.state.model_client = FakeModelClient(scripted_replies=[_MALFORMED, _MALFORMED])
     r = await client.post(
         "/v1/tasks",
-        json={"goal": "x", "allowed_domains": ["example.com"], "start_agent_loop": True},
+        json={
+            "goal": "x",
+            "allowed_domains": ["example.com"],
+            "start_agent_loop": True,
+            "max_steps": 1,
+        },
         headers=auth_headers(app_settings.token),
     )
     tid = r.json()["task_id"]
@@ -273,6 +293,7 @@ async def test_agent_loop_uses_selected_browser_session(client, app, app_setting
             "allowed_domains": ["example.com"],
             "session_id": sid,
             "start_agent_loop": True,
+            "max_steps": 1,
         },
         headers=auth_headers(app_settings.token),
     )

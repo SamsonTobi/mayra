@@ -76,6 +76,9 @@ class FakeSessionBrowser:
     async def execute(self, session_id: str, action: Any, cmds: list[str], allowed_domains: list[str] | None = None) -> None:
         self.executions.append((session_id, action, cmds))
 
+    def forget_session(self, session_id: str) -> None:
+        self._ports.pop(session_id, None)
+
     async def close_all(self) -> None:
         self._ports.clear()
         self.opened.clear()

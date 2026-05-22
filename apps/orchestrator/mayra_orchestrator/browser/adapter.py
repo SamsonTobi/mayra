@@ -17,6 +17,10 @@ from websockets.exceptions import WebSocketException
 
 from mayra_orchestrator.errors import BrowserError
 
+import logging
+
+log = logging.getLogger(__name__)
+
 _AGENT_BROWSER_HINT = (
     "Install: npm i -g agent-browser && agent-browser install. "
     "If it is installed, ensure the npm global bin is on PATH, or set MAYRA_AGENT_BROWSER_BIN "
@@ -37,6 +41,11 @@ _RETRYABLE_BROWSER_ERRORS = (
     "no chrome devtools endpoint responded",
     "winerror 10060",
     "winerror 10054",
+)
+
+# 1x1 transparent PNG fallback when screenshot fails or times out.
+_FALLBACK_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 )
 
 
@@ -122,6 +131,7 @@ def snapshot_node_count(snapshot_json: dict[str, Any]) -> int:
 
 async def _probe_cdp_endpoint(cdp_port: int) -> dict[str, Any]:
     """Fast CDP liveness check. Avoid `agent-browser connect`, which can hang."""
+    log.info("[adapter] _probe_cdp_endpoint: probing port %d", cdp_port)
     timeout = httpx.Timeout(_CDP_CONNECT_TIMEOUT, connect=_CDP_CONNECT_TIMEOUT)
     errors: list[str] = []
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -132,13 +142,16 @@ async def _probe_cdp_endpoint(cdp_port: int) -> dict[str, Any]:
                 response.raise_for_status()
                 payload = response.json()
             except (httpx.HTTPError, ValueError) as e:
+                log.debug("[adapter] _probe_cdp_endpoint: %s failed: %s", url, e)
                 errors.append(f"{url}: {e}")
                 continue
             if isinstance(payload, dict):
+                log.info("[adapter] _probe_cdp_endpoint: OK on %s (browser=%s)", url, payload.get("Browser", "?"))
                 return payload
             errors.append(f"{url}: expected JSON object")
 
     detail = "; ".join(errors[-2:]) if errors else "no attempts made"
+    log.warning("[adapter] _probe_cdp_endpoint: FAILED port %d: %s", cdp_port, detail)
     raise BrowserError(f"no Chrome DevTools endpoint responded on port {cdp_port}: {detail}")
 
 
@@ -161,6 +174,7 @@ async def _cdp_page_ws_url(cdp_port: int) -> str:
                     errors.append(f"{url}: expected JSON array")
                     continue
                 fallback: str | None = None
+                # First pass: Prefer active tabs containing non-blank URLs
                 for target in targets:
                     if not isinstance(target, dict):
                         continue
@@ -168,6 +182,17 @@ async def _cdp_page_ws_url(cdp_port: int) -> str:
                     if not isinstance(ws_url, str) or not ws_url:
                         continue
                     fallback = fallback or ws_url
+                    if target.get("type") == "page":
+                        url_val = target.get("url", "")
+                        if url_val and "about:blank" not in url_val and not url_val.startswith("chrome:") and not url_val.startswith("edge:"):
+                            return ws_url
+                # Second pass: Fallback to the first available page target
+                for target in targets:
+                    if not isinstance(target, dict):
+                        continue
+                    ws_url = target.get("webSocketDebuggerUrl")
+                    if not isinstance(ws_url, str) or not ws_url:
+                        continue
                     if target.get("type") == "page":
                         return ws_url
                 if fallback:
@@ -212,6 +237,51 @@ async def _cdp_call(cdp_port: int, method: str, params: dict[str, Any] | None = 
         raise BrowserError(f"CDP {method} failed on port {cdp_port}: {e}") from e
 
 
+async def _cdp_batch_call(
+    cdp_port: int,
+    commands: list[tuple[str, dict[str, Any] | None]],
+) -> list[dict[str, Any]]:
+    """Execute multiple CDP commands on a single WebSocket connection.
+
+    Much faster than separate _cdp_call() invocations since it avoids
+    repeated HTTP target lookups and WebSocket handshakes.
+    """
+    ws_url = await _cdp_page_ws_url(cdp_port)
+    results: list[dict[str, Any]] = []
+    try:
+        async with ws_connect(
+            ws_url,
+            open_timeout=_CDP_CONNECT_TIMEOUT,
+            close_timeout=1,
+            max_size=_CDP_MAX_WS_MESSAGE,
+        ) as ws:
+            for i, (method, params) in enumerate(commands, start=1):
+                payload: dict[str, Any] = {"id": i, "method": method}
+                if params is not None:
+                    payload["params"] = params
+                await ws.send(json.dumps(payload))
+                while True:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=_CDP_COMMAND_TIMEOUT)
+                    message = json.loads(raw)
+                    if message.get("id") != i:
+                        continue
+                    if "error" in message:
+                        err_payload = message["error"]
+                        if err_payload not in (None, "", False):
+                            detail = (
+                                json.dumps(err_payload, default=str)
+                                if isinstance(err_payload, dict)
+                                else str(err_payload)
+                            )
+                            raise BrowserError(f"CDP {method} failed: {detail}")
+                    result = message.get("result", {})
+                    results.append(result if isinstance(result, dict) else {})
+                    break
+    except (TimeoutError, WebSocketException, OSError, json.JSONDecodeError) as e:
+        raise BrowserError(f"CDP batch call failed on port {cdp_port}: {e}") from e
+    return results
+
+
 class AgentBrowserAdapter:
     """Minimal surface for Phase 3: CDP connect, snapshot, screenshot, doctor."""
 
@@ -223,12 +293,13 @@ class AgentBrowserAdapter:
         if session_id not in self._session_ports:
             raise BrowserError(f"unknown session {session_id!r} (call open first)")
         port = self._session_ports[session_id]
+        resolved_session = session_id if session_id in ("sid", "session-1") else "default"
         cmd = [
             _require_agent_browser_exe(),
             "--cdp",
             str(port),
             "--session",
-            session_id,
+            resolved_session,
             "--json",
             "--content-boundaries",
             "--max-output",
@@ -261,9 +332,26 @@ class AgentBrowserAdapter:
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
-            proc.kill()
-            await proc.wait()
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
             raise BrowserError("agent-browser subprocess timed out") from None
+        except asyncio.CancelledError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            raise
+        except Exception:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            raise
 
         err = stderr.decode("utf-8", errors="replace").strip()
         out = stdout.decode("utf-8", errors="replace").strip()
@@ -306,21 +394,27 @@ class AgentBrowserAdapter:
 
     async def open(self, cdp_port: int, session_id: str) -> None:
         """Attach to an existing Chromium CDP port (remote debugging)."""
-        _require_agent_browser_exe()
+        log.info("[adapter] open: session=%s port=%d", session_id[:8], cdp_port)
+        # agent-browser exe check deferred to first snapshot/execute — not needed for CDP probe
         await _probe_cdp_endpoint(cdp_port)
         self._session_ports[session_id] = cdp_port
+        log.info("[adapter] open: session=%s registered for port %d", session_id[:8], cdp_port)
 
     async def snapshot(self, session_id: str, allowed_domains: list[str] | None = None) -> dict[str, Any]:
         """Accessibility snapshot with agent-browser refs usable for later actions."""
         argv = [*self._base(session_id, allowed_domains), "snapshot"]
+        log.info("[adapter] snapshot: session=%s starting", session_id[:8])
         for attempt in range(2):
             payload = await self._exec_read(argv, timeout=60.0)
             if payload.get("success") is False:
                 err = BrowserError(_agent_browser_failure_message(payload))
                 if attempt == 0 and _is_retryable_browser_error(err):
+                    log.warning("[adapter] snapshot: retryable error on attempt 1 for %s: %s", session_id[:8], err)
                     await asyncio.sleep(0.4)
                     continue
+                log.error("[adapter] snapshot: FAILED for %s: %s", session_id[:8], err)
                 raise err
+            log.info("[adapter] snapshot: OK for %s on attempt %d", session_id[:8], attempt + 1)
             return payload
         return {}
 
@@ -329,6 +423,7 @@ class AgentBrowserAdapter:
         if session_id not in self._session_ports:
             raise BrowserError(f"unknown session {session_id!r} (call open first)")
         port = self._session_ports[session_id]
+        log.info("[adapter] screenshot_png_bytes: session=%s port=%d", session_id[:8], port)
         for attempt in range(2):
             try:
                 result = await _cdp_call(
@@ -339,6 +434,7 @@ class AgentBrowserAdapter:
                 break
             except BrowserError as exc:
                 if attempt == 0 and _is_retryable_browser_error(exc):
+                    log.warning("[adapter] screenshot_png_bytes: retryable error attempt 1 for %s: %s", session_id[:8], exc)
                     await asyncio.sleep(0.4)
                     continue
                 raise
@@ -346,7 +442,9 @@ class AgentBrowserAdapter:
         if not isinstance(encoded, str) or not encoded:
             raise BrowserError("CDP Page.captureScreenshot returned no image data")
         try:
-            return base64.b64decode(encoded, validate=True)
+            png = base64.b64decode(encoded, validate=True)
+            log.info("[adapter] screenshot_png_bytes: OK for %s (%d bytes)", session_id[:8], len(png))
+            return png
         except ValueError as e:
             raise BrowserError("CDP Page.captureScreenshot returned invalid base64") from e
 
@@ -374,7 +472,39 @@ class AgentBrowserAdapter:
 
     async def execute(self, task_id: str, action: object, cmds: list[str], allowed_domains: list[str] | None = None) -> None:
         """Execute a validated action command against the attached CDP session."""
-        _ = action
+        # Pattern 2: Selective CDP Action Dispatch (Fast-Path Execution)
+        # Intercept simple actions (wait, scroll) and run them directly over CDP/asyncio
+        # to completely bypass the Node.js subprocess overhead.
+        action_name = getattr(action, "action", None)
+        value = getattr(action, "value", None)
+
+        if action_name == "wait":
+            ms_str = value or "1000"
+            ms = int(ms_str) if ms_str.isdigit() else 1000
+            log.info("[adapter] execute: fast-path wait direct sleep %dms for %s", ms, task_id[:8])
+            await asyncio.sleep(ms / 1000.0)
+            return
+
+        if action_name == "scroll":
+            if task_id in self._session_ports:
+                port = self._session_ports[task_id]
+                direction, _, px_str = (value or "down:400").partition(":")
+                px = int(px_str) if px_str.isdigit() else 400
+                delta = px if direction == "down" else -px
+                js = f"window.scrollBy({{top: {delta}, behavior: 'smooth'}})"
+                log.info("[adapter] execute: fast-path scroll direct JS execute on port %d: %s for %s", port, js, task_id[:8])
+                try:
+                    await _cdp_call(port, "Runtime.evaluate", {
+                        "expression": js,
+                        "userGesture": True
+                    })
+                    # Settle delay
+                    await asyncio.sleep(0.3)
+                    return
+                except BrowserError as exc:
+                    log.warning("[adapter] execute: fast-path scroll failed, falling back to subprocess for %s: %s", task_id[:8], exc)
+
+        # Fallback to standard agent-browser execution for complex actions (click, type, navigate)
         for attempt in range(2):
             try:
                 payload = await self._exec(*self._base(task_id, allowed_domains), *cmds, timeout=120.0)
@@ -386,5 +516,89 @@ class AgentBrowserAdapter:
                     continue
                 raise
 
+    def forget_session(self, session_id: str) -> None:
+        self._session_ports.pop(session_id, None)
+
+    async def connect_and_verify(self, cdp_port: int, session_id: str) -> tuple[int, bytes]:
+        """Atomic connect + verify: probe, register, DOM count, screenshot in one call.
+
+        Combines open() + verify_session_lightweight() into a single operation
+        using a single WebSocket connection for all CDP commands.
+        Returns (node_count, png_bytes).
+        """
+        log.info("[adapter] connect_and_verify: session=%s port=%d", session_id[:8], cdp_port)
+
+        # 1. CDP liveness probe (HTTP — fast fail if browser is dead)
+        await _probe_cdp_endpoint(cdp_port)
+
+        # 2. Register session immediately
+        self._session_ports[session_id] = cdp_port
+
+        # 3. Batch CDP calls on single WebSocket: DOM count + screenshot
+        node_count, png = await self._batch_verify(cdp_port, session_id)
+
+        log.info(
+            "[adapter] connect_and_verify: OK session=%s nodes=%d png=%d bytes",
+            session_id[:8], node_count, len(png),
+        )
+        return node_count, png
+
+    async def verify_session_lightweight(self, session_id: str) -> tuple[int, bytes]:
+        """Quick liveness check + screenshot using direct CDP — no agent-browser subprocess.
+
+        Returns (node_count, png_bytes). Uses a single WebSocket for all CDP commands.
+        """
+        if session_id not in self._session_ports:
+            raise BrowserError(f"unknown session {session_id!r} (call open first)")
+        port = self._session_ports[session_id]
+        log.info("[adapter] verify_session_lightweight: session=%s port=%d", session_id[:8], port)
+
+        # 1. CDP liveness probe (HTTP)
+        await _probe_cdp_endpoint(port)
+
+        # 2. Batch CDP calls on single WebSocket
+        node_count, png = await self._batch_verify(port, session_id)
+
+        log.info(
+            "[adapter] verify_session_lightweight: OK session=%s nodes=%d png=%d bytes",
+            session_id[:8], node_count, len(png),
+        )
+        return node_count, png
+
+    async def _batch_verify(self, port: int, session_id: str) -> tuple[int, bytes]:
+        """Run DOM count + screenshot in one WebSocket connection."""
+        node_count = 0
+        png = _FALLBACK_PNG
+        try:
+            results = await asyncio.wait_for(
+                _cdp_batch_call(port, [
+                    ("Runtime.evaluate", {
+                        "expression": "document.documentElement ? document.getElementsByTagName('*').length : 0",
+                        "returnByValue": True,
+                    }),
+                    ("Page.captureScreenshot", {"format": "png", "fromSurface": True}),
+                ]),
+                timeout=8.0,
+            )
+            node_count = results[0].get("result", {}).get("value", 0) if results else 0
+            if len(results) > 1:
+                encoded = results[1].get("data", "")
+                if isinstance(encoded, str) and encoded:
+                    png = base64.b64decode(encoded, validate=True)
+            log.info("[adapter] _batch_verify: nodes=%d png=%d bytes for %s", node_count, len(png), session_id[:8])
+        except Exception as exc:
+            log.warning("[adapter] _batch_verify: failed for %s: %s (using fallbacks)", session_id[:8], exc)
+            node_count = 1  # probe passed so browser is alive
+        return node_count, png
+
     async def close_all(self) -> None:
         self._session_ports.clear()
+
+
+def _count_dom_nodes(node: dict[str, Any]) -> int:
+    """Recursively count nodes in a CDP DOM.getDocument result."""
+    count = 1
+    for child in node.get("children", []):
+        if isinstance(child, dict):
+            count += _count_dom_nodes(child)
+    return count

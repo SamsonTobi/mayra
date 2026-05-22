@@ -1,4 +1,4 @@
-"""Model provider HTTP adapters (Gemini, Grok, Cloudflare — grow incrementally)."""
+"""Model provider HTTP adapters (Gemini, Groq, Cloudflare — grow incrementally)."""
 
 from mayra_orchestrator.providers.gemini import GEMINI_MODELS_PATH, gemini_list_models
 

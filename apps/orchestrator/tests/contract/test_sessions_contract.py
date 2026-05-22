@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from mayra_orchestrator.errors import BrowserError
 from tests.contract.conftest import auth_headers
 
 pytestmark = pytest.mark.contract
@@ -49,3 +50,30 @@ async def test_sessions_snapshot_404(client, app_settings):
     h = auth_headers(app_settings.token)
     r = await client.post("/v1/sessions/not-a-uuid/snapshot", headers=h)
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_sessions_snapshot_drops_stale_session(client, app_settings, app):
+    h = auth_headers(app_settings.token)
+    connected = await client.post("/v1/sessions/connect", json={"port": 9222}, headers=h)
+    assert connected.status_code == 200
+    sid = connected.json()["session_id"]
+
+    async def fail_snapshot(session_id: str, allowed_domains=None):
+        _ = (session_id, allowed_domains)
+        raise BrowserError("Failed to read: connection timed out")
+
+    async def fail_png(session_id: str):
+        _ = session_id
+        raise BrowserError("CDP Page.captureScreenshot failed")
+
+    app.state.session_browser.snapshot = fail_snapshot
+    app.state.session_browser.screenshot_png_bytes = fail_png
+
+    r = await client.post(f"/v1/sessions/{sid}/snapshot", headers=h)
+    assert r.status_code == 410
+    assert r.json()["code"] == "session_disconnected"
+
+    r2 = await client.get("/v1/sessions", headers=h)
+    assert r2.status_code == 200
+    assert r2.json() == []
