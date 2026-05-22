@@ -155,6 +155,7 @@ export function useChatStream(
       es.addEventListener("action", onAny("action"));
       es.addEventListener("status", onAny("status"));
       es.addEventListener("approval", onAny("approval"));
+      es.addEventListener("step_meta", onAny("step_meta"));
       es.addEventListener("done", onAny("done"));
       es.addEventListener("error", onAny("error"));
       es.onerror = () => {

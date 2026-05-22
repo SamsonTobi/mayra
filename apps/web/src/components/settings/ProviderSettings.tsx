@@ -155,7 +155,7 @@ export function ProviderSettings() {
     try {
       const result = await client.validateSettings({
         provider: "groq",
-        model: "llama-3.1-8b-instant",
+        model: "meta-llama/llama-4-scout-17b-16e-instruct",
       });
       setMessage(`Groq responded in ${result.latency_ms} ms.`);
     } catch (e) {

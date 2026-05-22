@@ -191,7 +191,7 @@ export default function SessionsPage() {
         const first = existing[0]!;
         setSelectedPort(first.cdp_port);
         setAutoStatus("snapshotting");
-        const snap = await client.snapshotSession(first.session_id);
+        const snap = await client.verifySession(first.session_id);
         setLastNodes(snap.node_count);
         setPreviewPath(snap.screenshot_path);
         await refresh();
@@ -229,7 +229,7 @@ export default function SessionsPage() {
       const connected = await client.connectSession(selected.port);
       await refresh();
       setAutoStatus("snapshotting");
-      const snap = await client.snapshotSession(connected.session_id);
+      const snap = await client.verifySession(connected.session_id);
       setLastNodes(snap.node_count);
       setPreviewPath(snap.screenshot_path);
       await refresh();

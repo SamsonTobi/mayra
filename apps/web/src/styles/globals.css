@@ -151,6 +151,31 @@ select {
   white-space: pre-wrap;
 }
 
+.chat-model-meta {
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
+}
+
+.chat-observation-thumb {
+  display: block;
+  margin-top: 0.35rem;
+  padding: 0;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  overflow: hidden;
+  max-width: 140px;
+}
+
+.chat-observation-thumb img {
+  display: block;
+  width: 140px;
+  height: auto;
+  max-height: 88px;
+  object-fit: cover;
+}
+
 .system-row {
   display: flex;
   align-items: center;
@@ -215,6 +240,39 @@ select {
   background: rgba(146, 64, 14, 0.2);
   color: #fdba74;
   margin-bottom: 1rem;
+}
+
+.startup-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  margin: 1rem 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #14171d;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  margin-right: 0.5rem;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.status-dot.ready {
+  background: var(--risk-low);
+}
+
+.status-dot.working {
+  background: var(--risk-med);
+}
+
+.status-dot.error {
+  background: var(--risk-high);
 }
 
 .btn-link {

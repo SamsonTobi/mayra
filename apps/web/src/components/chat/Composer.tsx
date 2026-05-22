@@ -1,15 +1,38 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+const PROVIDER_STORAGE_KEY = "mayra.chat.provider";
 
 type Props = {
   onSend: (text: string, provider: string) => void;
   disabled?: boolean;
 };
 
+function readStoredProvider(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return sessionStorage.getItem(PROVIDER_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export function Composer({ onSend, disabled }: Props) {
   const [text, setText] = useState("");
-  const [provider, setProvider] = useState("");
+  const [provider, setProvider] = useState(readStoredProvider);
+
+  useEffect(() => {
+    try {
+      if (provider) {
+        sessionStorage.setItem(PROVIDER_STORAGE_KEY, provider);
+      } else {
+        sessionStorage.removeItem(PROVIDER_STORAGE_KEY);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [provider]);
 
   return (
     <form
@@ -40,7 +63,7 @@ export function Composer({ onSend, disabled }: Props) {
         value={text}
         disabled={disabled}
         onChange={(e) => setText(e.target.value)}
-        placeholder="Describe the goal…"
+        placeholder="Describe the goal..."
         style={{ flex: 1 }}
       />
       <button type="submit" className="btn btn-primary" disabled={disabled}>

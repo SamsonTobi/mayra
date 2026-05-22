@@ -158,6 +158,36 @@ export function reduceChatStreamEvent(
     return { messages, terminal: "none" };
   }
 
+  if (event === "step_meta") {
+    try {
+      const parsed = JSON.parse(data) as {
+        kind?: string;
+        provider?: string;
+        model?: string;
+        observation_screenshot_path?: string;
+      };
+      if (parsed.kind !== "step_meta") {
+        return { messages, terminal: "none" };
+      }
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (m?.kind === "assistant") {
+          messages[i] = {
+            ...m,
+            provider: parsed.provider ?? m.provider,
+            model: parsed.model ?? m.model,
+            observation_screenshot_path:
+              parsed.observation_screenshot_path ?? m.observation_screenshot_path,
+          };
+          break;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return { messages, terminal: "none" };
+  }
+
   if (event === "done") {
     const finalized = messages.map((m) =>
       m.kind === "assistant" && m.streaming ? { ...m, streaming: false } : m,

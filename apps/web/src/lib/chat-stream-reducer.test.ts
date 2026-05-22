@@ -36,4 +36,25 @@ describe("reduceChatStreamEvent", () => {
       expect(m.markdown).toBe("hello world");
     }
   });
+
+  it("attaches step_meta to the latest assistant bubble", () => {
+    let state = reduceChatStreamEvent([], "token", "hello");
+    state = reduceChatStreamEvent(
+      state.messages,
+      "step_meta",
+      JSON.stringify({
+        kind: "step_meta",
+        provider: "groq",
+        model: "meta-llama/llama-4-scout-17b-16e-instruct",
+        observation_screenshot_path: "C:\\\\tmp\\\\1.webp",
+      }),
+    );
+    const m = state.messages[0];
+    expect(m?.kind).toBe("assistant");
+    if (m?.kind === "assistant") {
+      expect(m.provider).toBe("groq");
+      expect(m.model).toBe("meta-llama/llama-4-scout-17b-16e-instruct");
+      expect(m.observation_screenshot_path).toContain("1.webp");
+    }
+  });
 });
