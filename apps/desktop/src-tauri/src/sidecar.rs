@@ -130,8 +130,11 @@ async fn forward_lines<R: AsyncBufReadExt + Unpin>(mut r: R, label: &'static str
 pub async fn start_sidecar_inner(app: &AppHandle, state: &SidecarState) -> Result<SidecarReadyPayload, String> {
     {
         let slot = state.lock().await;
-        if slot.runtime.is_some() {
-            return Err("sidecar already running".into());
+        if let Some(runtime) = &slot.runtime {
+            return Ok(SidecarReadyPayload {
+                port: runtime.port,
+                token: runtime.token.clone(),
+            });
         }
     }
     launch_sidecar(app, state).await

@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 
 /// Provider slugs probed in the OS keychain (`mayra` / `provider:{slug}`).
 pub const PROVIDER_SLUGS: &[&str] = &[
-    "anthropic", "cloudflare", "gemini", "grok", "openai",
+    "anthropic", "cloudflare", "gemini", "groq", "openai",
 ];
 
 /// Builds `(MAYRA_*, value)` pairs for `Command::envs`. Omits unset optional secrets.
@@ -74,11 +74,11 @@ mod tests {
     #[test]
     fn provider_keys_base64_encodes_map_roundtrip() {
         let mut map = Map::new();
-        map.insert("grok".to_string(), Value::String("sk-test".into()));
+        map.insert("groq".to_string(), Value::String("sk-test".into()));
         let bytes = serde_json::to_vec(&Value::Object(map)).unwrap();
         let b64 = STANDARD.encode(bytes);
         let raw = STANDARD.decode(b64).unwrap();
         let v: Value = serde_json::from_slice(&raw).unwrap();
-        assert_eq!(v["grok"], "sk-test");
+        assert_eq!(v["groq"], "sk-test");
     }
 }
