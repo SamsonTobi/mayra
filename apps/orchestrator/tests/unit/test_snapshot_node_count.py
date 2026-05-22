@@ -66,8 +66,6 @@ async def test_snapshot_uses_agent_browser_refs(monkeypatch):
             "agent-browser",
             "--cdp",
             "9222",
-            "--session",
-            "sid",
             "--json",
             "--content-boundaries",
             "--max-output",

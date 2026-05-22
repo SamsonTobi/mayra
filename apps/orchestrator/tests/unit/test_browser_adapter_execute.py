@@ -32,8 +32,6 @@ async def test_execute_uses_validated_command_tokens(monkeypatch):
             "agent-browser",
             "--cdp",
             "9222",
-            "--session",
-            "session-1",
             "--json",
             "--content-boundaries",
             "--max-output",

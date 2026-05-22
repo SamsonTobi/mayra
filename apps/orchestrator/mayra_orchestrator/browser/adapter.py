@@ -298,8 +298,6 @@ class AgentBrowserAdapter:
             _require_agent_browser_exe(),
             "--cdp",
             str(port),
-            "--session",
-            resolved_session,
             "--json",
             "--content-boundaries",
             "--max-output",
