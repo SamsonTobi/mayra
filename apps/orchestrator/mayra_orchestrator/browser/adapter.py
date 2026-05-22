@@ -43,6 +43,13 @@ _RETRYABLE_BROWSER_ERRORS = (
     "winerror 10054",
 )
 
+# Default system Chrome paths per OS.  Used to set AGENT_BROWSER_EXECUTABLE_PATH
+# so that agent-browser never spawns its own "Chrome for Testing" binary.
+_SYSTEM_CHROME_PATHS: dict[str, str] = {
+    "nt": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    "posix": "/usr/bin/google-chrome",
+}
+
 # 1x1 transparent PNG fallback when screenshot fails or times out.
 _FALLBACK_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
@@ -293,7 +300,7 @@ class AgentBrowserAdapter:
         if session_id not in self._session_ports:
             raise BrowserError(f"unknown session {session_id!r} (call open first)")
         port = self._session_ports[session_id]
-        resolved_session = session_id if session_id in ("sid", "session-1") else "default"
+
         cmd = [
             _require_agent_browser_exe(),
             "--cdp",
@@ -316,6 +323,13 @@ class AgentBrowserAdapter:
     async def _exec(self, *argv: str, timeout: float = 120.0) -> dict[str, Any]:
         env = os.environ.copy()
         env["AGENT_BROWSER_DEFAULT_TIMEOUT"] = str(int(timeout * 1000))
+        # Prevent agent-browser from spawning its own "Chrome for Testing"
+        # binary. Force it to use the system Chrome which we already launch
+        # with --remote-debugging-port via the desktop shell.
+        if "AGENT_BROWSER_EXECUTABLE_PATH" not in env:
+            _sys_chrome = _SYSTEM_CHROME_PATHS.get(os.name)
+            if _sys_chrome and Path(_sys_chrome).is_file():
+                env["AGENT_BROWSER_EXECUTABLE_PATH"] = _sys_chrome
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
