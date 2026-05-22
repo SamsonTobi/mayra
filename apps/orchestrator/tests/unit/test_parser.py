@@ -49,3 +49,28 @@ def test_schema_violation_raises_repairable():
     )
     with pytest.raises(SchemaRepairableError):
         parse_chat_and_action(raw)
+
+
+def test_parser_resilient_to_markdown_fences():
+    raw = (
+        "I will click the Login button.\n"
+        "===ACTION===\n"
+        "```json\n"
+        '{"action":"click","target_ref":"@e1","value":null,"risk":"low","reason":"open login"}\n'
+        "```"
+    )
+    chat, action = parse_chat_and_action(raw)
+    assert chat == "I will click the Login button."
+    assert action.action == "click"
+    assert action.target_ref == "@e1"
+
+
+def test_parser_fallback_extraction_without_delimiter():
+    raw = (
+        "I will click the Login button.\n"
+        '{"action":"click","target_ref":"@e1","value":null,"risk":"low","reason":"open login"}'
+    )
+    chat, action = parse_chat_and_action(raw)
+    assert chat == "I will click the Login button."
+    assert action.action == "click"
+    assert action.target_ref == "@e1"

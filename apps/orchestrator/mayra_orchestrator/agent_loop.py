@@ -10,6 +10,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import FastAPI
 
@@ -130,26 +131,56 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
     browser_session_id = rec.session_id or task_id
     model = app.state.model_client
 
-    budget = StepBudget(max_steps=rec.max_steps, remaining=rec.max_steps)
-    history: deque[str] = deque(rec.initial_messages, maxlen=512)
+    step_cap = rec.steps_remaining if rec.steps_remaining is not None else rec.max_steps
+    budget = StepBudget(max_steps=step_cap, remaining=step_cap)
+    history: deque[str] = deque([*rec.initial_messages, *rec.agent_history], maxlen=512)
+    await _warmup_providers(app, rec)
+    stuck_repeats = 0
 
     while True:
         try:
             budget.consume_step()
         except BudgetExhaustedError:
+            rec.agent_history = list(history)
+            rec.steps_remaining = 0
+            await _emit_status(
+                rec,
+                f"Step budget exhausted ({step_cap} steps). Send a message to continue this task.",
+                "warn",
+            )
             await _emit_done(rec, task_id, "budget_exhausted")
             return
 
         await _drain_user_messages(rec, history)
-        step_no = rec.max_steps - budget.remaining
+        step_no = step_cap - budget.remaining
 
         await _emit_status(
             rec,
-            f"Step {step_no}: reading the browser snapshot before asking the model.",
+            f"Step {step_no}: reading browser snapshot and capturing screenshot for the model.",
         )
-        snap_dict = await _snapshot_browser(browser, browser_session_id, rec.allowed_domains)
+        snap_dict, (screenshot_bytes, screenshot_mime) = await asyncio.gather(
+            _snapshot_browser(browser, browser_session_id, rec.allowed_domains),
+            _capture_model_screenshot(browser, browser_session_id, rec.allowed_domains)
+        )
+        effective_domains = _effective_allowed_domains(rec.allowed_domains, snap_dict)
         snapshot = Snapshot.from_json(snap_dict).prune()
         observation_hash = _observation_hash(snap_dict)
+
+        if rec.last_observation_hash is not None and observation_hash == rec.last_observation_hash:
+            stuck_repeats += 1
+        else:
+            stuck_repeats = 0
+        if stuck_repeats >= 2:
+            history.append(
+                "system:The page did not change since the last step. "
+                "Try a different element, scroll, or wait for content to load."
+            )
+            await _emit_status(
+                rec,
+                "Page unchanged since the last step; try a different approach.",
+                "warn",
+            )
+            stuck_repeats = 0
 
         if await _handle_manual_takeover(app, rec, task_id, browser, browser_session_id, snap_dict, observation_hash):
             return
@@ -176,9 +207,9 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
             )
             await _emit_done(rec, task_id, "aborted")
             return
-
-        await _emit_status(rec, f"Step {step_no}: capturing a screenshot for the model.")
-        screenshot_bytes, screenshot_mime = await _capture_model_screenshot(browser, browser_session_id, rec.allowed_domains)
+        observation_path = await _save_step_observation_screenshot(
+            app, task_id, step_no, screenshot_bytes
+        )
         image_note = f" with screenshot ({len(screenshot_bytes)} bytes)" if screenshot_bytes else ""
         await _emit_status(rec, f"Step {step_no}: asking the model for the next response{image_note}.")
         bundle = build_prompt(
@@ -187,13 +218,15 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
             snapshot=snapshot,
             screenshot_bytes=screenshot_bytes,
             screenshot_mime=screenshot_mime,
-            allowed_domains=list(rec.allowed_domains),
+            allowed_domains=effective_domains,
             step=step_no,
-            max_steps=rec.max_steps,
+            max_steps=step_cap,
         )
 
         chat_stream = _ChatReplyStreamer(rec)
-        raw = await _complete_with_limits(app, model, bundle, chat_stream.on_token, rec)
+        raw, used_provider, used_model = await _complete_with_limits(
+            app, model, bundle, chat_stream.on_token, rec
+        )
 
         while True:
             try:
@@ -221,10 +254,18 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
                     invalid_output=raw,
                     validation_error=str(exc),
                 )
-                raw = await _complete_with_limits(app, model, repair_bundle, _discard_token, rec)
+                raw, used_provider, used_model = await _complete_with_limits(
+                    app, model, repair_bundle, _discard_token, rec
+                )
 
         await chat_stream.emit_chat(chat)
         history.append(f"assistant:{chat}")
+        await _emit_step_meta(
+            rec,
+            provider=used_provider,
+            model=used_model,
+            observation_screenshot_path=observation_path,
+        )
 
         if (
             isinstance(action.target_ref, str)
@@ -235,7 +276,7 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
             await _emit_done(rec, task_id, "failed")
             return
 
-        ctx = _LoopRiskCtx(list(rec.allowed_domains), stale=False)
+        ctx = _LoopRiskCtx(effective_domains, stale=False)
         gated = reclassify_risk(action, snapshot, ctx)
         display_action = redact_for_display(gated, snapshot)
 
@@ -272,10 +313,22 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
             await _emit_done(rec, task_id, "failed")
             return
 
-        await _execute_browser(browser, browser_session_id, gated, cmds, rec.allowed_domains)
+        await _execute_browser(browser, browser_session_id, gated, cmds, effective_domains)
 
-        await _emit_action_log(rec, display_action, executed=True, step=step_no, screenshot_path=None)
+        history.append(
+            f"action:step={step_no} executed={gated.action} ref={gated.target_ref} "
+            f"value={display_action.value!r} reason={gated.reason!r}"
+        )
+        await _emit_action_log(
+            rec, display_action, executed=True, step=step_no, screenshot_path=observation_path
+        )
+
         rec.last_observation_hash = observation_hash
+        rec.agent_history = list(history)
+
+        if budget.remaining <= 0 and not rec.exhaust_budget_probe:
+            await _emit_done(rec, task_id, "success")
+            return
 
         # Continue the loop for the next step (to let the model see the next screen)
         continue
@@ -432,60 +485,183 @@ async def _discard_token(delta: str) -> None:
     _ = delta
 
 
-async def _complete_with_limits(app: FastAPI, model: Any, bundle: Any, on_token: Any, rec: TaskRecord) -> str:
-    # If the user specified a provider, use it. Otherwise, use all available as fallbacks.
-    providers = []
+def _ordered_provider_clients(app: FastAPI, rec: TaskRecord) -> list[Any]:
     app_providers = getattr(app.state, "providers", {})
     if getattr(rec, "provider", None):
         preferred = app_providers.get(rec.provider)
-        if preferred:
-            providers.append(preferred)
-    
-    if not providers:
-        # Fall back through all available
-        ordered = []
-        for p in ["gemini", "groq", "cloudflare"]:
-            if p in app_providers:
-                ordered.append(app_providers[p])
-        for p, client in app_providers.items():
-            if p not in ["gemini", "groq", "cloudflare"]:
-                ordered.append(client)
-        providers = ordered
+        return [preferred] if preferred else []
 
-    if not providers:
-        return await model.complete_streaming(bundle, temperature=0.0, on_token=on_token)
+    ordered: list[Any] = []
+    for p in ["gemini", "groq", "cloudflare"]:
+        if p in app_providers:
+            ordered.append(app_providers[p])
+    for p, client in app_providers.items():
+        if p not in ("gemini", "groq", "cloudflare"):
+            ordered.append(client)
+    return ordered
 
-    last_error: Exception | None = None
+
+async def _warmup_providers(app: FastAPI, rec: TaskRecord) -> None:
+    """Prime provider auth before the first vision call (avoids flaky first-request 401s)."""
+    for client in _ordered_provider_clients(app, rec):
+        health = getattr(client, "health_check", None)
+        if health is None:
+            continue
+        try:
+            await health()
+        except ProviderError:
+            pass
+        return
+
+
+def _effective_allowed_domains(configured: list[str], snap_dict: dict[str, Any]) -> list[str]:
+    placeholder = {"example.com"}
+    if configured and set(configured) - placeholder:
+        return list(configured)
+    host = _host_from_snapshot(snap_dict)
+    if host:
+        merged = list(configured)
+        if host not in merged:
+            merged.append(host)
+        return merged
+    return list(configured) if configured else ["example.com"]
+
+
+def _host_from_snapshot(snap_dict: dict[str, Any]) -> str | None:
+    for key in ("url", "pageUrl", "page_url"):
+        raw = snap_dict.get(key)
+        if isinstance(raw, str) and raw:
+            host = urlparse(raw).hostname
+            return host.lower() if host else None
+    data = snap_dict.get("data")
+    if isinstance(data, dict):
+        for key in ("url", "pageUrl", "page_url"):
+            raw = data.get(key)
+            if isinstance(raw, str) and raw:
+                host = urlparse(raw).hostname
+                return host.lower() if host else None
+    return None
+
+
+async def _save_step_observation_screenshot(
+    app: FastAPI,
+    task_id: str,
+    step: int,
+    screenshot_bytes: bytes,
+) -> str | None:
+    if not screenshot_bytes:
+        return None
+    root = getattr(getattr(app.state, "settings", None), "data_dir", None)
+    if root is None:
+        root = getattr(app.state, "data_dir", None)
+    if root is None:
+        return None
+    path = root / "screenshots" / task_id / f"{step}-observation.webp"
+    try:
+        await asyncio.to_thread(save_png_as_preview_webp, screenshot_bytes, path)
+    except Exception:  # noqa: BLE001
+        path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(path.write_bytes, screenshot_bytes)
+    return str(path.resolve())
+
+
+async def _emit_step_meta(
+    rec: TaskRecord,
+    *,
+    provider: str,
+    model: str,
+    observation_screenshot_path: str | None,
+) -> None:
+    payload: dict[str, Any] = {
+        "kind": "step_meta",
+        "provider": provider,
+        "model": model,
+    }
+    if observation_screenshot_path:
+        payload["observation_screenshot_path"] = observation_screenshot_path
+    await _put_sse(rec, "step_meta", payload)
+
+
+async def _complete_with_limits(
+    app: FastAPI,
+    model: Any,
+    bundle: Any,
+    on_token: Any,
+    rec: TaskRecord,
+) -> tuple[str, str, str]:
+    clients = _ordered_provider_clients(app, rec)
+    preferred_only = bool(getattr(rec, "provider", None))
+
+    if not clients:
+        raw = await model.complete_streaming(bundle, temperature=0.0, on_token=on_token)
+        provider = getattr(model, "provider", "unknown")
+        model_id = getattr(model, "model", "unknown")
+        return raw, provider, model_id
+
+    last_error: ProviderError | None = None
     original_streamer = on_token.__self__ if hasattr(on_token, "__self__") else None
 
-    for client in providers:
-        provider_name = client.provider
-        limiter = getattr(app.state, "rate_limit", {}).get(provider_name)
-        semaphore = getattr(app.state, "semaphore", {}).get(provider_name)
-        
-        # Reset the streamer state for fallback attempts
+    def _reset_streamer() -> None:
         if original_streamer and hasattr(original_streamer, "_buffer"):
             original_streamer._buffer = ""
             original_streamer._closed = False
             original_streamer.emitted = False
 
-        try:
-            if limiter is None or semaphore is None:
+    async def _call_client(client: Any) -> str:
+        provider_name = client.provider
+        limiter = getattr(app.state, "rate_limit", {}).get(provider_name)
+        semaphore = getattr(app.state, "semaphore", {}).get(provider_name)
+        if limiter is None or semaphore is None:
+            return await client.complete_streaming(bundle, temperature=0.0, on_token=on_token)
+        async with limiter:
+            async with semaphore:
                 return await client.complete_streaming(bundle, temperature=0.0, on_token=on_token)
-            async with limiter:
-                async with semaphore:
-                    return await client.complete_streaming(bundle, temperature=0.0, on_token=on_token)
-        except ProviderError as e:
-            # Fall back on rate_limited or 5xx server errors
-            err_str = str(e.args[0]) if e.args else ""
-            if "rate_limited" in err_str or "server_error" in err_str:
-                last_error = e
-                continue
-            raise
+
+    max_unauth_attempts = 2 if preferred_only else 1
+    for client in clients:
+        rate_limit_retries = 0
+        unauth_attempts = 0
+        while True:
+            _reset_streamer()
+            try:
+                raw = await _call_client(client)
+                return raw, client.provider, client.model
+            except ProviderError as e:
+                err_str = str(e.args[0]) if e.args else ""
+                if "unauthorized" in err_str:
+                    last_error = e
+                    unauth_attempts += 1
+                    if unauth_attempts < max_unauth_attempts:
+                        await asyncio.sleep(0.45)
+                        continue
+                    if preferred_only:
+                        raise
+                    break
+                if "rate_limited" in err_str:
+                    last_error = e
+                    rate_limit_retries += 1
+                    if rate_limit_retries <= 3:
+                        log.warning("[agent_loop] Rate limit hit for %s, retrying in 60s (attempt %d/3)...", client.provider, rate_limit_retries)
+                        for sec in range(60, 0, -10):
+                            await _emit_status(
+                                rec,
+                                f"Rate limit hit for {client.provider}. Retrying in {sec}s...",
+                                "warn"
+                            )
+                            # Responsive cancellation-friendly sleep
+                            for _ in range(5):
+                                await asyncio.sleep(2.0)
+                        await _emit_status(rec, f"Retrying with {client.provider} now...", "info")
+                        await asyncio.sleep(1.0)
+                        continue
+                    break
+                if "server_error" in err_str:
+                    last_error = e
+                    break
+                raise
 
     if last_error:
         raise last_error
-
     raise ProviderError("system_error:no_clients_succeeded")
 
 

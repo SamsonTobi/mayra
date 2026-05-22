@@ -57,7 +57,7 @@ def reclassify_risk(action: Action, snapshot: Snapshot, ctx: RiskContext) -> Act
 
     if action.action == "navigate":
         host = (urlparse(action.value or "").hostname or "").lower()
-        if not _host_allowed(host, ctx.allowed_domains):
+        if ctx.allowed_domains and not _host_allowed(host, ctx.allowed_domains):
             policy = _max_risk(policy, "high")
 
     if action.target_ref and action.target_ref.startswith("@e"):
