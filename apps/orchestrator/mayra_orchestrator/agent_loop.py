@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import uuid
 from collections import deque
+
+log = logging.getLogger("mayra.orchestrator.agent_loop")
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -212,6 +215,8 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
         )
         image_note = f" with screenshot ({len(screenshot_bytes)} bytes)" if screenshot_bytes else ""
         await _emit_status(rec, f"Step {step_no}: asking the model for the next response{image_note}.")
+        port = browser._session_ports.get(browser_session_id)
+        active_tabs = await _get_active_tabs(port)
         bundle = build_prompt(
             goal=rec.goal,
             history=tuple(history),
@@ -221,6 +226,7 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
             allowed_domains=effective_domains,
             step=step_no,
             max_steps=step_cap,
+            active_tabs=active_tabs,
         )
 
         chat_stream = _ChatReplyStreamer(rec)
@@ -749,3 +755,26 @@ async def _emit_approval(
         "ts": ts,
     }
     await _put_sse(rec, "approval", {"kind": "approval", "message": msg})
+
+
+async def _get_active_tabs(port: int | None) -> list[dict[str, Any]]:
+    if not port:
+        return []
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            res = await client.get(f"http://127.0.0.1:{port}/json")
+            if res.status_code == 200:
+                targets = res.json()
+                tabs = []
+                for t in targets:
+                    if isinstance(t, dict) and t.get("type") == "page":
+                        tabs.append({
+                            "title": t.get("title", ""),
+                            "url": t.get("url", "")
+                        })
+                return tabs
+    except Exception:
+        pass
+    return []
+

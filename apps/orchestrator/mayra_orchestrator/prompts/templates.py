@@ -65,13 +65,24 @@ def build_prompt(
     allowed_domains: list[str],
     step: int,
     max_steps: int,
+    active_tabs: list[dict[str, Any]] | None = None,
 ) -> PromptBundle:
     history_text = "(empty)" if not history else "\n".join(repr(m) for m in history)
+    tabs_text = ""
+    if active_tabs:
+        tabs_text = "ACTIVE OPEN BROWSER TABS:\n"
+        for i, tab in enumerate(active_tabs, 1):
+            title = tab.get("title") or "Untitled"
+            url = tab.get("url") or "about:blank"
+            tabs_text += f" - Tab {i}: \"{title}\" (URL: {url})\n"
+        tabs_text += "\n"
+
     user_text = (
         f"GOAL: {goal}\n"
         f"ALLOWED DOMAINS: {', '.join(allowed_domains)}\n"
         f"STEP {step}/{max_steps}.\n"
         f"HISTORY:\n{history_text}\n"
+        f"{tabs_text}"
         "ACCESSIBILITY TREE:\n"
         "<content-boundaries>\n"
         f"{_render_nodes(snapshot)}\n"
