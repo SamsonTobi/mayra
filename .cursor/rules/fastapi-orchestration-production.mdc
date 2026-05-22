@@ -29,7 +29,7 @@ FastAPI is Mayra's local orchestration engine. It owns: model client calls, acti
 ## Lifespan & Resource Ownership
 
 - Use `@asynccontextmanager` `lifespan(app)`, not the deprecated `@app.on_event("startup")`. Create and tear down: httpx clients per provider, the `agent-browser` adapter, the Supabase client, the structured-log file sink, and a `TaskRegistry` for in-flight agent runs.
-- Build one provider-client factory: `get_model_client(provider) -> ModelClient`. Use LiteLLM only if its abstraction holds for all three providers (Cloudflare Workers AI, Gemini, Grok); otherwise write three thin adapters with a shared `ModelClient` Protocol. Do not write a "universal" wrapper that hides provider-specific features.
+- Build one provider-client factory: `get_model_client(provider) -> ModelClient`. Use LiteLLM only if its abstraction holds for all three providers (Cloudflare Workers AI, Gemini, Groq); otherwise write three thin adapters with a shared `ModelClient` Protocol. Do not write a "universal" wrapper that hides provider-specific features.
 
 ## Concurrency, Cancellation & Backpressure
 

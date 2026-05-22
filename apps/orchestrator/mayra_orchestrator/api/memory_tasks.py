@@ -28,6 +28,8 @@ class TaskRecord:
     exhaust_budget_probe: bool = False
     status: str = "running"
     last_observation_hash: str | None = None
+    agent_history: list[str] = field(default_factory=list)
+    steps_remaining: int | None = None
 
 
 class MemoryTaskRegistry:
@@ -82,6 +84,20 @@ class MemoryTaskRegistry:
     async def enqueue_message(self, task_id: str, text: str, *, acting_owner_id: str) -> None:
         rec = self.ensure_task_owned(task_id, acting_owner_id)
         await rec.messages.put(text)
+
+    def prepare_continue(self, task_id: str, *, acting_owner_id: str, additional_steps: int) -> TaskRecord:
+        rec = self.ensure_task_owned(task_id, acting_owner_id)
+        if rec.agent_runner is not None and not rec.agent_runner.done():
+            raise ValueError(f"task {task_id} is still running")
+        if rec.status != "budget_exhausted":
+            raise ValueError(f"task {task_id} cannot continue (status={rec.status})")
+        if additional_steps < 1:
+            raise ValueError("additional_steps must be >= 1")
+        rec.steps_remaining = additional_steps
+        rec.status = "running"
+        rec.sse_queue = asyncio.Queue()
+        rec.live_loop = True
+        return rec
 
     async def abort(self, task_id: str, *, acting_owner_id: str | None = None) -> str:
         rec = self.tasks.get(task_id)

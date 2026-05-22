@@ -14,7 +14,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from mayra_orchestrator.agent_loop import run_agent_loop
 from mayra_orchestrator.api.correlation import get_correlation_id
 from mayra_orchestrator.api.deps import get_effective_owner_id, require_bearer
-from mayra_orchestrator.api.schemas import CreateTaskRequest, CreateTaskResponse, TaskMessageRequest
+from mayra_orchestrator.api.schemas import (
+    ContinueTaskRequest,
+    CreateTaskRequest,
+    CreateTaskResponse,
+    TaskMessageRequest,
+)
 
 router = APIRouter(prefix="/v1/tasks", tags=["tasks"], dependencies=[Depends(require_bearer)])
 
@@ -117,6 +122,35 @@ async def abort_task(
     reg = request.app.state.registry
     status = await reg.abort(task_id, acting_owner_id=owner_id)
     return {"status": status}
+
+
+@router.post("/{task_id}/continue")
+async def continue_task(
+    request: Request,
+    task_id: str,
+    body: ContinueTaskRequest,
+    owner_id: Annotated[str, Depends(get_effective_owner_id)],
+) -> dict[str, bool]:
+    reg = request.app.state.registry
+    try:
+        rec = reg.prepare_continue(
+            task_id,
+            acting_owner_id=owner_id,
+            additional_steps=body.additional_steps,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="task not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if rec.agent_runner is not None and not rec.agent_runner.done():
+        raise HTTPException(status_code=409, detail="task already running")
+
+    rec.agent_runner = asyncio.create_task(
+        run_agent_loop(request.app, task_id, get_correlation_id()),
+        name=f"mayra-task-{task_id}",
+    )
+    return {"ok": True}
 
 
 @router.post("/{task_id}/message")

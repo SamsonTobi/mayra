@@ -52,7 +52,7 @@ Tauri is Mayra's native security boundary. It is not a generic Node-like backend
 
 ## Secure Credential Storage
 
-- API keys (Gemini, Grok, Cloudflare Workers AI) live in `tauri-plugin-stronghold` or `tauri-plugin-keyring` (OS keychain / Windows Credential Manager). Never in `tauri-plugin-store` (plain JSON on disk).
+- API keys (Gemini, Groq, Cloudflare Workers AI) live in `tauri-plugin-stronghold` or `tauri-plugin-keyring` (OS keychain / Windows Credential Manager). Never in `tauri-plugin-store` (plain JSON on disk).
 - Expose two narrow Rust commands: `save_provider_key(provider, key)` and `read_provider_key(provider)`. The `read` command is callable only by the sidecar's signed request (token-checked), not by the frontend.
 - The frontend never sees raw keys. Settings UI submits the key, then reads back only a masked status (`{ provider, configured: true, last4: "abcd" }`).
 
