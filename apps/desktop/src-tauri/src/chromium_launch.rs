@@ -70,6 +70,8 @@ pub fn launch_chromium_remote_debug(app: &AppHandle, browser: &str, port: u16) -
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
             .arg("--disable-features=ChromeWhatsNewUI")
+            .arg("--disable-session-crashed-bubble")
+            .arg("about:blank")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
