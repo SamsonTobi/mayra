@@ -61,6 +61,7 @@ export function useChatStream(
   reset: () => void;
   appendUserMessage: (text: string) => void;
   appendSystemMessage: (text: string, severity?: "info" | "warn" | "error") => void;
+  loadHistoryState: (messages: ChatMessage[], done: boolean, failed: boolean, lastDoneStatus?: string) => void;
 } {
   const [state, setState] = useState<ChatStreamState>(initial);
   const esRef = useRef<EventSource | null>(null);
@@ -172,6 +173,21 @@ export function useChatStream(
     [port, token],
   );
 
+  const loadHistoryState = useCallback(
+    (messages: ChatMessage[], done: boolean, failed: boolean, lastDoneStatus?: string) => {
+      suppressEsErrorRef.current = true;
+      esRef.current?.close();
+      esRef.current = null;
+      setState({
+        messages,
+        done,
+        failed,
+        lastDoneStatus,
+      });
+    },
+    [],
+  );
+
   useEffect(
     () => () => {
       suppressEsErrorRef.current = true;
@@ -190,6 +206,7 @@ export function useChatStream(
       reset,
       appendUserMessage,
       appendSystemMessage,
+      loadHistoryState,
     }),
     [
       state.messages,
@@ -200,6 +217,7 @@ export function useChatStream(
       reset,
       appendUserMessage,
       appendSystemMessage,
+      loadHistoryState,
     ],
   );
 }

@@ -3,7 +3,7 @@ import "@/styles/globals.css";
 import { OrchestratorProvider } from "@/providers/orchestrator-context";
 import { SupabaseBootstrap } from "@/providers/supabase-bootstrap";
 import { BrowserShellHint } from "@/components/common/BrowserShellHint";
-import { SiteNav } from "@/components/common/SiteNav";
+import { AppLayout } from "@/components/common/AppLayout";
 
 export const metadata: Metadata = {
   title: "Mayra",
@@ -21,10 +21,10 @@ export default function RootLayout({
         <OrchestratorProvider>
           <SupabaseBootstrap />
           <BrowserShellHint />
-          <SiteNav />
-          <main className="shell">{children}</main>
+          <AppLayout>{children}</AppLayout>
         </OrchestratorProvider>
       </body>
     </html>
   );
 }
+

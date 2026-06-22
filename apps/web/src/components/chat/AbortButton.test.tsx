@@ -12,7 +12,7 @@ describe("AbortButton", () => {
     );
     expect(screen.getByRole("button")).toBeDisabled();
     rerender(<AbortButton taskId="t1" disabled={false} onAbort={onAbort} />);
-    await user.click(screen.getByRole("button", { name: /abort task/i }));
+    await user.click(screen.getByRole("button", { name: /stop agent/i }));
     expect(onAbort).toHaveBeenCalledOnce();
     rerender(<AbortButton taskId="t1" disabled onAbort={onAbort} />);
     expect(screen.getByRole("button")).toBeDisabled();

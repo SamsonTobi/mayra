@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useOrchestrator } from "@/providers/orchestrator-context";
 import { useChatStream } from "@/hooks/useChatStream";
 import { useAutoBrowserSession } from "@/hooks/useAutoBrowserSession";
@@ -9,6 +10,8 @@ import { AbortButton } from "./AbortButton";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
 import { TypingIndicator } from "./TypingIndicator";
+import { Dropdown } from "../common/Dropdown";
+import type { ChatMessage } from "@mayra/contracts";
 
 function conversationHistory(
   messages: ReturnType<typeof useChatStream>["messages"],
@@ -16,13 +19,10 @@ function conversationHistory(
   return messages
     .flatMap((message) => {
       if (message.kind === "user") return [`user:${message.text}`];
-      if (message.kind === "assistant")
-        return [`assistant:${message.markdown}`];
+      if (message.kind === "assistant") return [`assistant:${message.markdown}`];
       if (message.kind === "action_log") {
         const a = message.action;
-        return [
-          `action:step=${message.step} executed=${a.action} ref=${a.target_ref} reason=${a.reason}`,
-        ];
+        return [`action:step=${message.step} executed=${a.action} ref=${a.target_ref} reason=${a.reason}`];
       }
       return [];
     })
@@ -38,15 +38,72 @@ export function ChatWindow() {
   const browserSession = useAutoBrowserSession();
   const [taskId, setTaskId] = useState<string | null>(null);
   const lastProviderRef = useRef("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const queryTaskId = searchParams.get("t");
+
   const {
     messages,
     done,
     failed,
     lastDoneStatus,
     start,
+    reset,
     appendUserMessage,
     appendSystemMessage,
+    loadHistoryState,
   } = useChatStream(port, token);
+
+  // Sync taskId and message history when URL query param changes
+  useEffect(() => {
+    if (queryTaskId) {
+      setTaskId(queryTaskId);
+      try {
+        const cached = localStorage.getItem(`mayra.chat.task.${queryTaskId}`);
+        if (cached) {
+          const parsed = JSON.parse(cached) as {
+            messages: ChatMessage[];
+            done: boolean;
+            failed: boolean;
+            lastDoneStatus?: string;
+          };
+          loadHistoryState(
+            parsed.messages,
+            parsed.done,
+            parsed.failed,
+            parsed.lastDoneStatus
+          );
+          if (!parsed.done && !parsed.failed && port && token) {
+            start(queryTaskId);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load task from local storage:", e);
+      }
+    } else {
+      setTaskId(null);
+      reset();
+    }
+  }, [queryTaskId, port, token, loadHistoryState, start, reset]);
+
+  // Persist message state to local storage when changed
+  useEffect(() => {
+    if (taskId && messages.length > 0) {
+      try {
+        const stateToSave = { messages, done, failed, lastDoneStatus };
+        localStorage.setItem(`mayra.chat.task.${taskId}`, JSON.stringify(stateToSave));
+      } catch (e) {
+        console.error("Failed to persist task state:", e);
+      }
+    }
+  }, [taskId, messages, done, failed, lastDoneStatus]);
+
+  // Auto-scroll to bottom of chat list
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   const lastShot = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -81,15 +138,10 @@ export function ChatWindow() {
         appendUserMessage(trimmed);
         try {
           await client.postTaskMessage(taskId, trimmed);
-          await client.continueTask(taskId, {
-            additional_steps: CONTINUE_STEPS,
-          });
+          await client.continueTask(taskId, { additional_steps: CONTINUE_STEPS });
           start(taskId);
         } catch (e) {
-          appendSystemMessage(
-            e instanceof Error ? e.message : "Could not continue the task.",
-            "error",
-          );
+          appendSystemMessage(e instanceof Error ? e.message : "Could not continue task.", "error");
         }
         return;
       }
@@ -99,12 +151,7 @@ export function ChatWindow() {
         try {
           await client.postTaskMessage(taskId, trimmed);
         } catch (e) {
-          appendSystemMessage(
-            e instanceof Error
-              ? e.message
-              : "Could not send follow-up message.",
-            "error",
-          );
+          appendSystemMessage(e instanceof Error ? e.message : "Could not send message.", "error");
         }
         return;
       }
@@ -121,27 +168,25 @@ export function ChatWindow() {
           start_agent_loop: true,
           max_steps: CHAT_MAX_STEPS,
         });
+
+        const newHistoryItem = { id: res.task_id, goal: trimmed, ts: new Date().toISOString() };
+        try {
+          const rawHistory = localStorage.getItem("mayra.chat.history");
+          const historyItems = rawHistory ? JSON.parse(rawHistory) : [];
+          historyItems.push(newHistoryItem);
+          localStorage.setItem("mayra.chat.history", JSON.stringify(historyItems));
+          window.dispatchEvent(new Event("mayra-history-updated"));
+        } catch (err) {
+          console.error("Failed to save history list item:", err);
+        }
+
         setTaskId(res.task_id);
-        start(res.task_id);
+        router.push(`/?t=${res.task_id}`);
       } catch (e) {
-        appendSystemMessage(
-          e instanceof Error ? e.message : "Could not start chat task.",
-          "error",
-        );
+        appendSystemMessage(e instanceof Error ? e.message : "Could not start chat task.", "error");
       }
     },
-    [
-      client,
-      browserSession.ready,
-      browserSession.sessionId,
-      taskId,
-      done,
-      lastDoneStatus,
-      messages,
-      start,
-      appendUserMessage,
-      appendSystemMessage,
-    ],
+    [client, browserSession.ready, browserSession.sessionId, taskId, done, lastDoneStatus, messages, start, appendUserMessage, appendSystemMessage, router],
   );
 
   const onRetry = useCallback(() => {
@@ -149,154 +194,119 @@ export function ChatWindow() {
     void onSend(lastUserMessage, lastProviderRef.current);
   }, [lastUserMessage, onSend]);
 
-  const showDevApprovalInject =
-    process.env.NEXT_PUBLIC_MAYRA_DEV_CHAT_TOOLS === "1";
-
-  const onInjectApproval = useCallback(async () => {
-    if (!client || !taskId) return;
-    await fetch(`http://127.0.0.1:${port}/v1/tasks/${taskId}/inject_approval`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-  }, [client, taskId, port, token]);
-
   const onAbort = useCallback(async () => {
     if (!client || !taskId) return;
     await client.abort(taskId);
   }, [client, taskId]);
 
-  const streamingAssistant = messages.some(
-    (m) => m.kind === "assistant" && m.streaming,
-  );
-
-  const awaitingAssistant =
-    Boolean(taskId && client && !done && !failed) &&
+  const streamingAssistant = messages.some((m) => m.kind === "assistant" && m.streaming);
+  const awaitingAssistant = Boolean(taskId && client && !done && !failed) &&
     messages.some((m) => m.kind === "user") &&
     !messages.some((m) => m.kind === "assistant") &&
     !streamingAssistant;
 
-  const budgetPaused = Boolean(
-    taskId && done && lastDoneStatus === "budget_exhausted",
-  );
+  const budgetPaused = Boolean(taskId && done && lastDoneStatus === "budget_exhausted");
+  const hasMessages = messages.length > 0;
+  const showPreview = browserSession.sessionId && hasMessages;
+
+  const sessionOptions = useMemo(() => {
+    const opts = [{ value: "", label: "Select Browser Session" }];
+    browserSession.sessions.forEach((s) => {
+      opts.push({
+        value: s.session_id,
+        label: `Session ${s.session_id.slice(0, 8)}`,
+      });
+    });
+    return opts;
+  }, [browserSession.sessions]);
 
   return (
-    <section>
-      <h1>Chat</h1>
-      <p className="muted">
-        Send a goal when the local orchestrator and browser session are ready.
-      </p>
-      <section className="startup-status" aria-live="polite">
-        <div>
-          <span
-            className={`status-dot ${
-              browserSession.ready
-                ? "ready"
-                : browserSession.status === "error" ||
-                    browserSession.status === "manual-needed"
-                  ? "error"
-                  : "working"
-            }`}
-            aria-hidden="true"
+    <div style={{ display: "flex", flex: 1, height: "100%", width: "100%", overflow: "hidden" }}>
+      {/* Left Chat Pane */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", borderRight: showPreview ? "1px solid var(--border)" : "none" }}>
+        
+        {/* Low contrast session header */}
+        <header className="chat-header" style={{ height: "60px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 1.5rem", flexShrink: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: "0.95rem", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", maxWidth: "50%" }}>
+            {taskId ? `Task: ${messages.find(m => m.kind === "user")?.text || "Active Run"}` : "New Task"}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <span className={`status-dot ${browserSession.ready ? "ready" : browserSession.status === "error" ? "error" : "working"}`} />
+              <Dropdown
+                value={browserSession.sessionId || ""}
+                onChange={(val) => browserSession.setSessionId(val)}
+                options={sessionOptions}
+                disabled={!client || !browserSession.ready || Boolean(taskId && !done)}
+                placeholder="Select Browser Session"
+                triggerStyle={{ minWidth: "180px" }}
+              />
+            </div>
+          </div>
+        </header>
+
+        {/* Dynamic chat box view */}
+        {!hasMessages ? (
+          <div className="chat-centered-container">
+            <h1 className="centered-first-line">Your personal web agent.</h1>
+            <h1 className="centered-second-line">What do you need?</h1>
+            <div style={{ width: "100%" }}>
+              <Composer
+                onSend={onSend}
+                disabled={!client || !browserSession.ready}
+                isAbortable={Boolean(taskId && !done)}
+                onAbort={onAbort}
+              />
+            </div>
+            {browserSession.error && (
+              <div className="banner" style={{ marginTop: "1rem", width: "100%" }}>{browserSession.error}</div>
+            )}
+          </div>
+        ) : (
+          <div className="chat-active-container">
+            <div className="chat-messages-scroll">
+              <div className="chat-messages-maxwidth">
+                {budgetPaused && (
+                  <p className="muted" style={{ marginBottom: "0.75rem", padding: "0.5rem 1rem", background: "rgba(245,158,11,0.05)", borderRadius: "8px" }}>
+                    Step budget reached. Type another message to resume in the same browser session.
+                  </p>
+                )}
+                <MessageList
+                  messages={messages}
+                  port={port}
+                  token={token}
+                  onRetry={lastUserMessage && browserSession.ready ? onRetry : undefined}
+                />
+                {awaitingAssistant && (
+                  <p className="muted" style={{ margin: "0.5rem 1rem" }}>Waiting for browser snapshot + model…</p>
+                )}
+                {streamingAssistant && <TypingIndicator />}
+                <div ref={messagesEndRef} />
+              </div>
+            </div>
+            
+            <div className="chat-composer-wrapper">
+              <Composer
+                onSend={onSend}
+                disabled={!client || !browserSession.ready}
+                isAbortable={Boolean(taskId && !done)}
+                onAbort={onAbort}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Right Browser Viewport Pane */}
+      {showPreview && (
+        <div style={{ width: "400px", height: "100%", overflowY: "auto", padding: "1.5rem", flexShrink: 0, background: "var(--bg)" }}>
+          <LivePreviewPanel
+            screenshotPath={lastShot}
+            sessionId={browserSession.sessionId}
+            client={client}
           />
-          <strong>{browserSession.statusText}</strong>
-          {browserSession.sessionId ? (
-            <span className="muted">
-              {" "}
-              session {browserSession.sessionId.slice(0, 8)}
-              {browserSession.lastNodeCount != null
-                ? ` · ${browserSession.lastNodeCount} nodes`
-                : ""}
-            </span>
-          ) : null}
         </div>
-        <button
-          type="button"
-          className="btn"
-          disabled={browserSession.busy || Boolean(taskId && !done)}
-          onClick={() => void browserSession.retry()}
-        >
-          {browserSession.busy ? "Working..." : "Retry startup"}
-        </button>
-      </section>
-      {browserSession.healthError ? (
-        <div className="banner">
-          agent-browser check failed: {browserSession.healthError}
-        </div>
-      ) : null}
-      {browserSession.error ? (
-        <div className="banner">{browserSession.error}</div>
-      ) : null}
-      <div className="row" style={{ gap: "1rem", marginBottom: "1rem" }}>
-        <AbortButton
-          taskId={taskId}
-          disabled={!taskId || done}
-          onAbort={onAbort}
-        />
-        {showDevApprovalInject && taskId && !done ? (
-          <button
-            type="button"
-            className="btn"
-            onClick={() => void onInjectApproval()}
-          >
-            Inject approval (dev only)
-          </button>
-        ) : null}
-      </div>
-      <div className="row" style={{ gap: "0.75rem", marginBottom: "1rem" }}>
-        <label className="muted" htmlFor="chat-session">
-          Browser session
-        </label>
-        <select
-          id="chat-session"
-          value={browserSession.sessionId}
-          onChange={(event) => browserSession.setSessionId(event.target.value)}
-          disabled={!client || !browserSession.ready || Boolean(taskId && !done)}
-        >
-          <option value="">Select a session</option>
-          {browserSession.sessions.map((session) => (
-            <option key={session.session_id} value={session.session_id}>
-              {session.session_id.slice(0, 8)} on port {session.cdp_port}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          className="btn"
-          disabled={!client || browserSession.busy}
-          onClick={() => void browserSession.refresh()}
-        >
-          Refresh
-        </button>
-      </div>
-      {budgetPaused ? (
-        <p className="muted" style={{ marginBottom: "0.75rem" }}>
-          Step budget reached for this task. Send another message to continue in
-          the same browser session ({CONTINUE_STEPS} more steps).
-        </p>
-      ) : null}
-      <MessageList
-        messages={messages}
-        port={port}
-        token={token}
-        onRetry={lastUserMessage && browserSession.ready ? onRetry : undefined}
-      />
-      {awaitingAssistant ? (
-        <p className="muted" style={{ margin: "0.5rem 0" }}>
-          Waiting for the agent (browser snapshot + model)…
-        </p>
-      ) : null}
-      {streamingAssistant ? <TypingIndicator /> : null}
-      <Composer
-        onSend={onSend}
-        disabled={!client || !browserSession.ready}
-      />
-      <LivePreviewPanel
-        screenshotPath={lastShot}
-        sessionId={browserSession.sessionId}
-        client={client}
-      />
-    </section>
+      )}
+    </div>
   );
 }
