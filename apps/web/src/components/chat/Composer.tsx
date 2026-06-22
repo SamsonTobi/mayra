@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { ArrowUp, Square } from "@phosphor-icons/react";
+import { Dropdown } from "../common/Dropdown";
 
 const PROVIDER_STORAGE_KEY = "mayra.chat.provider";
 
 type Props = {
   onSend: (text: string, provider: string) => void;
   disabled?: boolean;
+  isAbortable?: boolean;
+  onAbort?: () => void;
 };
 
 function readStoredProvider(): string {
@@ -18,11 +22,13 @@ function readStoredProvider(): string {
   }
 }
 
-export function Composer({ onSend, disabled }: Props) {
+export function Composer({ onSend, disabled, isAbortable, onAbort }: Props) {
   const [text, setText] = useState("");
   const [provider, setProvider] = useState(readStoredProvider);
+  const [isMultiline, setIsMultiline] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     try {
       if (provider) {
         sessionStorage.setItem(PROVIDER_STORAGE_KEY, provider);
@@ -34,41 +40,92 @@ export function Composer({ onSend, disabled }: Props) {
     }
   }, [provider]);
 
+  // Synchronously compute auto-resize height before paint to eliminate scroll overlaps and clipping
+  useLayoutEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    const sh = ta.scrollHeight;
+    ta.style.height = `${sh + 6}px`; // Add 6px buffer to avoid vertical boundary line clipping
+    ta.scrollTop = 0;
+    
+    // Toggle layout states with hysteresis to prevent jumpy layout loops
+    setIsMultiline((prev) => {
+      if (prev) {
+        // Once multiline, only revert to single-line if the text is short enough to safely fit (<= 15 chars) and has no newlines
+        return text.includes("\n") || text.length > 15;
+      }
+      return sh > 40 || text.includes("\n");
+    });
+  }, [text]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const t = text.trim();
+    if (!t || disabled) return;
+    onSend(t, provider);
+    setText("");
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      const t = text.trim();
+      if (!t || disabled) return;
+      onSend(t, provider);
+      setText("");
+    }
+  };
+
+  const providerOptions = [
+    { value: "", label: "Auto (Fallback)" },
+    { value: "gemini", label: "Gemini" },
+    { value: "groq", label: "Groq" },
+    { value: "cloudflare", label: "Cloudflare" },
+  ];
+
   return (
-    <form
-      className="row"
-      style={{ alignItems: "stretch", marginTop: "0.75rem", gap: "0.5rem" }}
-      onSubmit={(e) => {
-        e.preventDefault();
-        const t = text.trim();
-        if (!t) return;
-        onSend(t, provider);
-        setText("");
-      }}
-    >
-      <select
-        value={provider}
-        onChange={(e) => setProvider(e.target.value)}
-        disabled={disabled}
-        title="Model Provider"
-        style={{ flexShrink: 0 }}
-      >
-        <option value="">Auto (Fallback)</option>
-        <option value="gemini">Gemini</option>
-        <option value="groq">Groq</option>
-        <option value="cloudflare">Cloudflare</option>
-      </select>
+    <form className={`composer-container ${isMultiline ? "multiline" : ""}`} onSubmit={handleSubmit}>
       <textarea
-        rows={2}
+        ref={textareaRef}
+        rows={1}
         value={text}
         disabled={disabled}
         onChange={(e) => setText(e.target.value)}
-        placeholder="Describe the goal..."
-        style={{ flex: 1 }}
+        onKeyDown={handleKeyDown}
+        placeholder="Ask Mayra to do anything on the web..."
+        className="composer-textarea"
       />
-      <button type="submit" className="btn btn-primary" disabled={disabled}>
-        Send
-      </button>
+      <div className="composer-actions-row">
+        <Dropdown
+          value={provider}
+          onChange={setProvider}
+          options={providerOptions}
+          disabled={disabled}
+          placeholder="Model"
+          variant="clean"
+        />
+        {isAbortable ? (
+          <button
+            type="button"
+            className="composer-send-btn"
+            onClick={onAbort}
+            disabled={disabled}
+            title="Stop agent"
+          >
+            <Square size={16} weight="fill" />
+          </button>
+        ) : (
+          <button
+            type="submit"
+            className="composer-send-btn"
+            disabled={disabled || !text.trim()}
+            title="Send"
+          >
+            <ArrowUp size={16} weight="bold" />
+          </button>
+        )}
+      </div>
     </form>
   );
 }
