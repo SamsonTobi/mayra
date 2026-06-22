@@ -28,7 +28,7 @@ _Refine the contributions to focus on the intelligence and evaluation, now that 
 >
 > **2. Empirical Evaluation of Visual Grounding on Legacy Web Infrastructure:** Much of the existing literature evaluates agents on pristine benchmarks (like WebArena). This project will contribute vital empirical data by benchmarking a Vision-Language Model against traditional DOM-reliant automation (like Playwright) on inconsistent, legacy, and dynamic interfaces (e.g., Nigerian institutional portals like FUTA). This will concretely quantify the error recovery rate and resilience of vision-based navigation where static DOM structures fail.
 >
-> **3. Practical Implementation of Asynchronous Safety (HITL):** By designing and testing a strict Human-in-the-Loop verification protocol for high-risk actions, this research provides a practical UX framework for safe 'background agency'—a crucial step as AI moves from conversational partners to active executors."
+> **3. Practical Implementation of Asynchronous Safety (HITL):** By designing and testing a strict Human-in-the-Loop verification protocol for high-risk actions, this research provides a practical UX framework for safe 'background agency', a crucial step as AI moves from conversational partners to active executors."
 
 ---
 
