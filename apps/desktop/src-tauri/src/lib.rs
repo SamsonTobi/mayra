@@ -90,6 +90,10 @@ mod capability_tests {
                 { "validator": "^--token=[A-Za-z0-9_-]{32,128}$" },
                 { "validator": "^--data-dir=.{1,500}$" }
               ]
+            },
+            {
+              "name": "binaries/agent-browser",
+              "sidecar": true
             }
           ]
         }

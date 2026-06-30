@@ -2,6 +2,7 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{Map, Value};
+use tauri::Manager;
 
 /// Provider slugs probed in the OS keychain (`mayra` / `provider:{slug}`).
 pub const PROVIDER_SLUGS: &[&str] = &[
@@ -31,6 +32,94 @@ pub fn sidecar_env_pairs() -> Result<Vec<(String, String)>, String> {
     }
 
     Ok(out)
+}
+
+/// Resolve the bundled agent-browser native binary path.
+///
+/// In dev mode (`cargo tauri dev`), the binary lives in `src-tauri/binaries/`.
+/// In production, it is extracted to the app's resource directory.
+/// Tauri uses the pattern `<name>-<target_triple>[.exe]`.
+pub fn agent_browser_binary_path(app: &tauri::AppHandle) -> Result<String, String> {
+    let name = "agent-browser";
+    let triple = std::env::var("TAURI_ENV_TARGET_TRIPLE")
+        .or_else(|_| std::env::var("TARGET"))
+        .unwrap_or_else(|_| {
+            if cfg!(target_os = "windows") {
+                if cfg!(target_arch = "aarch64") {
+                    "aarch64-pc-windows-msvc".into()
+                } else {
+                    "x86_64-pc-windows-msvc".into()
+                }
+            } else if cfg!(target_os = "macos") {
+                if cfg!(target_arch = "aarch64") {
+                    "aarch64-apple-darwin".into()
+                } else {
+                    "x86_64-apple-darwin".into()
+                }
+            } else {
+                "x86_64-unknown-linux-gnu".into()
+            }
+        });
+    let exe_suffix = if cfg!(windows) { ".exe" } else { "" };
+    let filename = format!("{name}-{triple}{exe_suffix}");
+
+    // Try the resource directory first (production path).
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let prod_path = resource_dir.join("binaries").join(&filename);
+        if prod_path.is_file() {
+            log::info!("agent-browser binary resolved (prod): {}", prod_path.display());
+            return Ok(prod_path.to_string_lossy().into_owned());
+        }
+    }
+
+    // Fall back to the project binaries directory (dev path).
+    let dev_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("binaries")
+        .join(&filename);
+    if dev_path.is_file() {
+        log::info!("agent-browser binary resolved (dev): {}", dev_path.display());
+        return Ok(dev_path.to_string_lossy().into_owned());
+    }
+
+    // Last resort: check PATH (global npm install).
+    #[cfg(windows)]
+    {
+        if let Ok(path) = std::process::Command::new("where")
+            .arg("agent-browser.cmd")
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&path.stdout);
+            if let Some(line) = stdout.lines().next() {
+                let cmd_path = std::path::Path::new(line.trim());
+                if cmd_path.extension().map(|e| e == "cmd").unwrap_or(false) {
+                    let native = cmd_path.parent().map(|p| {
+                        let arch = if std::env::consts::ARCH == "aarch64" {
+                            "arm64"
+                        } else {
+                            "x64"
+                        };
+                        p.join("node_modules")
+                            .join("agent-browser")
+                            .join("bin")
+                            .join(format!("agent-browser-win32-{arch}.exe"))
+                    });
+                    if let Some(ref p) = native {
+                        if p.is_file() {
+                            log::info!("agent-browser binary resolved (npm): {}", p.display());
+                            return Ok(p.to_string_lossy().into_owned());
+                        }
+                    }
+                }
+                if cmd_path.is_file() {
+                    return Ok(cmd_path.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+
+    // Not found anywhere.
+    log::warn!("agent-browser binary not found; falling back to PATH lookup in Python");
+    Ok("agent-browser".into())
 }
 
 fn read_keyring_optional(attribute: &str) -> Result<Option<String>, String> {

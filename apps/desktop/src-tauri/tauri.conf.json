@@ -20,7 +20,8 @@
         "minWidth": 1024,
         "minHeight": 680,
         "decorations": true,
-        "resizable": true
+        "resizable": true,
+        "maximized": true
       }
     ],
     "security": {
@@ -30,13 +31,18 @@
         "enable": true,
         "scope": ["$APPLOCALDATA/Mayra/screenshots/**"]
       },
-      "capabilities": ["main-window", "sidecar", "notifications", "chrome-probe"]
+      "capabilities": [
+        "main-window",
+        "sidecar",
+        "notifications",
+        "chrome-probe"
+      ]
     }
   },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "externalBin": ["binaries/mayra-orchestrator"],
+    "externalBin": ["binaries/mayra-orchestrator", "binaries/agent-browser"],
     "windows": {
       "webviewInstallMode": { "type": "embedBootstrapper" },
       "nsis": { "installMode": "currentUser" }
@@ -47,7 +53,9 @@
     "updater": {
       "active": false,
       "dangerousInsecureTransportProtocol": false,
-      "endpoints": ["https://updates.mayra.local/{{target}}/{{current_version}}"],
+      "endpoints": [
+        "https://updates.mayra.local/{{target}}/{{current_version}}"
+      ],
       "pubkey": "REPLACE_AT_RELEASE",
       "windows": { "installMode": "passive" }
     }

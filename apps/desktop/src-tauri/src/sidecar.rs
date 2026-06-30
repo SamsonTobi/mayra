@@ -148,7 +148,17 @@ async fn launch_sidecar(app: &AppHandle, state: &SidecarState) -> Result<Sidecar
         }
     }
 
-    let env_pairs = sidecar_env::sidecar_env_pairs()?;
+    let mut env_pairs = sidecar_env::sidecar_env_pairs()?;
+
+    // Resolve the bundled agent-browser native binary so the orchestrator
+    // can invoke it directly (no Node.js / npm required for end users).
+    match sidecar_env::agent_browser_binary_path(app) {
+        Ok(path) => {
+            log::info!("MAYRA_AGENT_BROWSER_BIN={}", path);
+            env_pairs.push(("MAYRA_AGENT_BROWSER_BIN".into(), path));
+        }
+        Err(e) => log::warn!("Could not resolve agent-browser binary: {e}"),
+    }
 
     let port = crate::pick_unused_loopback_port().map_err(|e| e.to_string())?;
     let token = crate::generate_sidecar_token();
