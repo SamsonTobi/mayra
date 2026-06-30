@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from collections import deque
 
@@ -23,6 +24,7 @@ from mayra_orchestrator.api.memory_tasks import TaskRecord
 from mayra_orchestrator.browser.preview_image import save_png_as_preview_webp
 from mayra_orchestrator.errors import (
     ActionValidationError,
+    BrowserError,
     BudgetExhaustedError,
     MayraError,
     ProviderError,
@@ -76,6 +78,49 @@ class _LoopRiskCtx:
 
 _OTP_HINTS = ("code", "otp", "verification")
 
+_BROWSER_RECOVERY_MAX_ATTEMPTS = 2
+_BROWSER_RECOVERY_BACKOFF_S = 0.08
+_BROWSER_PROBE_CACHE_S = 1.5
+
+
+async def _recover_browser_session(
+    browser: Any,
+    session_id: str,
+    port: int | None,
+) -> int | None:
+    """Best-effort in-place CDP recovery. Returns the live port on success, ``None`` on failure.
+
+    Never relaunches Chrome — only re-probes and re-attaches. If the port is
+    genuinely dead the caller preserves the old fail-the-task behaviour.
+    """
+    if port is None:
+        return None
+    probe = getattr(browser, "_probe_cdp_endpoint", None)
+    if probe is None:
+        return None
+    for attempt in range(_BROWSER_RECOVERY_MAX_ATTEMPTS):
+        try:
+            await probe(port)
+        except BrowserError:
+            await asyncio.sleep(_BROWSER_RECOVERY_BACKOFF_S * (attempt + 1))
+            continue
+        forget = getattr(browser, "forget_session", None)
+        if callable(forget):
+            forget(session_id)
+        try:
+            await browser.open(port, session_id)
+        except BrowserError:
+            await asyncio.sleep(_BROWSER_RECOVERY_BACKOFF_S * (attempt + 1))
+            continue
+        verify = getattr(browser, "verify_session_lightweight", None)
+        if verify is not None:
+            try:
+                await verify(session_id)
+            except BrowserError:
+                continue
+        return port
+    return None
+
 
 class _ChatReplyStreamer:
     """Emit only the natural-language part before the action contract delimiter."""
@@ -85,34 +130,68 @@ class _ChatReplyStreamer:
     def __init__(self, rec: TaskRecord) -> None:
         self._rec = rec
         self._buffer = ""
+        self._emitted_length = 0
         self._closed = False
         self.emitted = False
 
-    async def on_token(self, delta: str) -> None:
+    async def on_token(self, delta: str, thought: bool = False) -> None:
         if self._closed:
+            return
+        if thought:
+            await self._emit(delta, thought=True)
             return
         self._buffer += delta
         idx = self._buffer.find(self._delimiter)
-        if idx == -1:
+        if idx != -1:
+            safe_part = self._buffer[:idx]
+            to_emit = safe_part[self._emitted_length :]
+            if to_emit:
+                await self._emit(to_emit, thought=False)
+                self._emitted_length = len(safe_part)
+            self._closed = True
             return
-        await self._emit(self._buffer[:idx].strip())
-        self._buffer = ""
-        self._closed = True
+        buffer_len = len(self._buffer)
+        hold_back = 20
+        if buffer_len > hold_back:
+            safe_length = buffer_len - hold_back
+            to_emit = self._buffer[self._emitted_length : safe_length]
+            if to_emit:
+                await self._emit(to_emit, thought=False)
+                self._emitted_length = safe_length
 
     async def emit_chat(self, chat: str) -> None:
-        if self.emitted:
+        if self._closed:
             return
-        await self._emit(chat.strip())
+        idx = self._buffer.find(self._delimiter)
+        if idx != -1:
+            chat_part = self._buffer[:idx]
+        else:
+            chat_part = chat
+        to_emit = chat_part[self._emitted_length :]
+        if to_emit:
+            await self._emit(to_emit, thought=False)
+            self._emitted_length = len(chat_part)
+        self._closed = True
 
-    async def _emit(self, text: str) -> None:
+    async def _emit(self, text: str, thought: bool = False) -> None:
         if not text:
             return
         self.emitted = True
-        await _put_sse(self._rec, "token", {"kind": "token", "delta": text})
+        payload: dict[str, Any] = {"kind": "token", "delta": text}
+        if thought:
+            payload["thought"] = True
+        await _put_sse(self._rec, "token", payload)
 
 
 async def run_agent_loop(app: FastAPI, task_id: str, correlation_id: str) -> None:
     rec = app.state.registry.tasks[task_id]
+    log.info(
+        "[agent_loop] starting task %s (status=%s, steps_remaining=%s, queued_messages=%d)",
+        task_id[:8],
+        rec.status,
+        rec.steps_remaining,
+        rec.messages.qsize(),
+    )
     try:
         await _run_agent_loop_body(app, task_id, correlation_id, rec)
     except asyncio.CancelledError:
@@ -125,19 +204,27 @@ async def run_agent_loop(app: FastAPI, task_id: str, correlation_id: str) -> Non
         await _emit_error(rec, correlation_id, "internal_error", str(exc))
         await _emit_done(rec, task_id, "failed")
     finally:
+        log.info("[agent_loop] task %s ending; status=%s", task_id[:8], rec.status)
+        app.state.registry.persist()
         await rec.sse_queue.put(None)
 
 
-async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, rec: TaskRecord) -> None:
+async def _run_agent_loop_body(
+    app: FastAPI, task_id: str, correlation_id: str, rec: TaskRecord
+) -> None:
     approvals = app.state.approval_registry
     browser = app.state.session_browser if rec.session_id else app.state.browser
     browser_session_id = rec.session_id or task_id
     model = app.state.model_client
 
+    log.info("[agent_loop] _run_agent_loop_body START task=%s session=%s", task_id[:8], browser_session_id[:8] if browser_session_id else "none")
+
     step_cap = rec.steps_remaining if rec.steps_remaining is not None else rec.max_steps
     budget = StepBudget(max_steps=step_cap, remaining=step_cap)
     history: deque[str] = deque([*rec.initial_messages, *rec.agent_history], maxlen=512)
+    log.info("[agent_loop] warming up providers...")
     await _warmup_providers(app, rec)
+    log.info("[agent_loop] providers warmed, entering main loop")
     stuck_repeats = 0
 
     while True:
@@ -157,15 +244,96 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
         await _drain_user_messages(rec, history)
         step_no = step_cap - budget.remaining
 
+        # Detect conversational / non-action messages (e.g. "hold on", "wait a sec").
+        # Skip the expensive browser gather — the model replies with text only.
+        _latest_user = _latest_user_message(history)
+        if _latest_user and _is_conversational_message(_latest_user):
+            log.info("[agent_loop] step=%d conversational msg, skipping browser gather", step_no)
+            bundle = build_prompt(
+                goal=rec.goal,
+                history=tuple(history),
+                snapshot=Snapshot(),
+                screenshot_bytes=b"",
+                screenshot_mime="image/png",
+                allowed_domains=rec.allowed_domains,
+                step=step_no,
+                max_steps=step_cap,
+                active_tabs=None,
+            )
+            chat_stream = _ChatReplyStreamer(rec)
+            raw, used_provider, used_model = await _complete_with_limits(
+                app, model, bundle, chat_stream.on_token, rec
+            )
+            try:
+                chat, action = parse_chat_and_action(raw)
+            except SchemaRepairableError:
+                await chat_stream.emit_chat(raw)
+                history.append(f"assistant:{raw}")
+                rec.agent_history = list(history)
+                app.state.registry.persist()
+                continue
+            await chat_stream.emit_chat(chat)
+            history.append(f"assistant:{chat}")
+            rec.agent_history = list(history)
+            app.state.registry.persist()
+            # Emit a stub action log so the UI doesn't look broken
+            if action.action in ("wait",):
+                await _emit_action_log(
+                    rec, action, executed=True, step=step_no, screenshot_path=None
+                )
+            continue
+
         await _emit_status(
             rec,
             f"Step {step_no}: reading browser snapshot and capturing screenshot for the model.",
         )
-        snap_dict, (screenshot_bytes, screenshot_mime) = await asyncio.gather(
-            _snapshot_browser(browser, browser_session_id, rec.allowed_domains),
-            _capture_model_screenshot(browser, browser_session_id, rec.allowed_domains)
+        # Move port lookup here so _get_active_tabs can run concurrently with
+        # the snapshot and screenshot subprocesses instead of sequentially after.
+        port = browser._session_ports.get(browser_session_id)
+        log.info(
+            "[agent_loop] step=%d starting browser gather (snapshot+screenshot+tabs) port=%s",
+            step_no, port,
         )
-        effective_domains = _effective_allowed_domains(rec.allowed_domains, snap_dict)
+        _t_browser = time.perf_counter()
+        # Top-level gather timeout prevents indefinite hangs when a subprocess
+        # or CDP call fails to respect its internal timeout (known Windows issue).
+        _GATHER_TIMEOUT = 90.0
+        try:
+            snap_dict, (screenshot_bytes, screenshot_mime), active_tabs = await asyncio.wait_for(
+                asyncio.gather(
+                    _snapshot_browser(browser, browser_session_id, rec.allowed_domains),
+                    _capture_model_screenshot(browser, browser_session_id, rec.allowed_domains),
+                    _get_active_tabs(port),
+                ),
+                timeout=_GATHER_TIMEOUT,
+            )
+            log.info("[agent_loop] step=%d browser gather COMPLETED successfully", step_no)
+        except TimeoutError:
+            log.error(
+                "[agent_loop] step=%d browser gather timed out after %.0fs",
+                step_no,
+                _GATHER_TIMEOUT,
+            )
+            raise BrowserError(
+                f"Browser snapshot/screenshot timed out after {_GATHER_TIMEOUT:.0f}s"
+            ) from None
+        except BrowserError as exc:
+            log.warning(
+                "[agent_loop] step=%d browser gather failed: %s — attempting recovery", step_no, exc
+            )
+            await _emit_status(rec, f"Browser connection dropped ({exc}). Reconnecting…", "warn")
+            recovered_port = await _recover_browser_session(browser, browser_session_id, port)
+            if recovered_port is None:
+                raise
+            port = recovered_port
+            budget.refund_step()
+            continue
+        log.info(
+            "[agent_loop] step=%d browser_gather=%dms (snap+shot+tabs concurrent)",
+            step_no,
+            int((time.perf_counter() - _t_browser) * 1000),
+        )
+        effective_domains = _effective_allowed_domains(rec.allowed_domains, snap_dict, active_tabs)
         snapshot = Snapshot.from_json(snap_dict).prune()
         observation_hash = _observation_hash(snap_dict)
 
@@ -173,6 +341,9 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
             stuck_repeats += 1
         else:
             stuck_repeats = 0
+        # Also track repeated identical actions (same action + target, regardless of page hash)
+        _last_action_key = getattr(rec, "_last_action_key", "")
+        _current_action_key = ""  # filled in after parse; checked after action extraction below
         if stuck_repeats >= 2:
             history.append(
                 "system:The page did not change since the last step. "
@@ -185,7 +356,9 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
             )
             stuck_repeats = 0
 
-        if await _handle_manual_takeover(app, rec, task_id, browser, browser_session_id, snap_dict, observation_hash):
+        if await _handle_manual_takeover(
+            app, rec, task_id, browser, browser_session_id, snap_dict, observation_hash
+        ):
             return
 
         if _has_otp_prompt(snapshot):
@@ -214,9 +387,9 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
             app, task_id, step_no, screenshot_bytes
         )
         image_note = f" with screenshot ({len(screenshot_bytes)} bytes)" if screenshot_bytes else ""
-        await _emit_status(rec, f"Step {step_no}: asking the model for the next response{image_note}.")
-        port = browser._session_ports.get(browser_session_id)
-        active_tabs = await _get_active_tabs(port)
+        await _emit_status(
+            rec, f"Step {step_no}: asking the model for the next response{image_note}."
+        )
         bundle = build_prompt(
             goal=rec.goal,
             history=tuple(history),
@@ -230,8 +403,16 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
         )
 
         chat_stream = _ChatReplyStreamer(rec)
+        _t_model = time.perf_counter()
         raw, used_provider, used_model = await _complete_with_limits(
             app, model, bundle, chat_stream.on_token, rec
+        )
+        log.info(
+            "[agent_loop] step=%d model_call=%dms provider=%s model=%s",
+            step_no,
+            int((time.perf_counter() - _t_model) * 1000),
+            used_provider,
+            used_model,
         )
 
         while True:
@@ -273,12 +454,38 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
             observation_screenshot_path=observation_path,
         )
 
+        # Detect repeated identical actions (same action + target) even if page hash changes
+        _current_action_key = f"{action.action}:{action.target_ref}"
+        _prev_key = getattr(rec, "_last_action_key", "")
+        if _current_action_key == _prev_key and action.action in ("click", "type"):
+            _action_repeats = getattr(rec, "_action_repeats", 0) + 1
+        else:
+            _action_repeats = 0
+        rec._last_action_key = _current_action_key  # type: ignore[attr-defined]
+        rec._action_repeats = _action_repeats  # type: ignore[attr-defined]
+        if _action_repeats >= 3:
+            rec._action_repeats = 0  # type: ignore[attr-defined]
+            history.append(
+                "system:The same action has been attempted multiple times without effect. "
+                "The element may not be clickable, the page may not have loaded fully, "
+                "or the target ref may be stale. Try scrolling, waiting longer, "
+                "or using a different locator."
+            )
+            await _emit_status(
+                rec,
+                "Repeated action not working. Try a different approach or scroll first.",
+                "warn",
+            )
+            stuck_repeats = 0  # reset so the model has a chance to try something else
+
         if (
             isinstance(action.target_ref, str)
             and action.target_ref.startswith("@")
             and snapshot.find(action.target_ref) is None
         ):
-            await _emit_error(rec, correlation_id, "action_validation_error", "snapshot missing target_ref")
+            await _emit_error(
+                rec, correlation_id, "action_validation_error", "snapshot missing target_ref"
+            )
             await _emit_done(rec, task_id, "failed")
             return
 
@@ -298,7 +505,9 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
                 step_no,
                 rec.allowed_domains,
             )
-            await _emit_approval(rec, correlation_id, approval_id, display_action, approval_screenshot_path)
+            await _emit_approval(
+                rec, correlation_id, approval_id, display_action, approval_screenshot_path
+            )
             try:
                 await asyncio.wait_for(rec.approval_event.wait(), timeout=300.0)
             except TimeoutError:
@@ -312,6 +521,35 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
             await _emit_done(rec, task_id, "success")
             return
 
+        # Detect when the model is stuck in a wait loop (e.g. "awaiting user instruction"
+        # repeated across multiple steps). After 3 consecutive idle waits, pause and
+        # tell the user the agent is waiting for direction.
+        _IDLE_WAIT_REASONS = (
+            "awaiting", "instruction", "guidance", "pause", "standstill",
+            "user input", "user direction", "further direction", "further input",
+            "waiting for user", "waiting for input", "waiting for direction",
+        )
+        if gated.action == "wait" and gated.reason:
+            reason_lower = gated.reason.lower()
+            if any(token in reason_lower for token in _IDLE_WAIT_REASONS):
+                _consecutive_idle_waits = getattr(rec, "_consecutive_idle_waits", 0) + 1
+                rec._consecutive_idle_waits = _consecutive_idle_waits  # type: ignore[attr-defined]
+            else:
+                rec._consecutive_idle_waits = 0  # type: ignore[attr-defined]
+        else:
+            rec._consecutive_idle_waits = 0  # type: ignore[attr-defined]
+
+        if getattr(rec, "_consecutive_idle_waits", 0) >= 3:
+            rec._consecutive_idle_waits = 0  # type: ignore[attr-defined]
+            await _emit_status(
+                rec,
+                "The agent appears to be waiting for further direction. "
+                "Send a follow-up message to continue, or abort the task.",
+                "warn",
+            )
+            await _emit_done(rec, task_id, "budget_exhausted")
+            return
+
         try:
             cmds = to_agent_browser_command(gated)
         except ActionValidationError as exc:
@@ -319,7 +557,23 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
             await _emit_done(rec, task_id, "failed")
             return
 
-        await _execute_browser(browser, browser_session_id, gated, cmds, effective_domains)
+        try:
+            await _execute_browser(browser, browser_session_id, gated, cmds, effective_domains)
+        except BrowserError as exc:
+            log.warning(
+                "[agent_loop] step=%d execute failed: %s — attempting recovery", step_no, exc
+            )
+            await _emit_status(
+                rec, f"Browser connection dropped during action ({exc}). Reconnecting…", "warn"
+            )
+            recovered_port = await _recover_browser_session(browser, browser_session_id, port)
+            if recovered_port is None:
+                raise
+            port = recovered_port
+            try:
+                await _execute_browser(browser, browser_session_id, gated, cmds, effective_domains)
+            except BrowserError:
+                raise
 
         history.append(
             f"action:step={step_no} executed={gated.action} ref={gated.target_ref} "
@@ -331,6 +585,7 @@ async def _run_agent_loop_body(app: FastAPI, task_id: str, correlation_id: str, 
 
         rec.last_observation_hash = observation_hash
         rec.agent_history = list(history)
+        app.state.registry.persist()
 
         if budget.remaining <= 0 and not rec.exhaust_budget_probe:
             await _emit_done(rec, task_id, "success")
@@ -349,10 +604,16 @@ async def _drain_user_messages(rec: TaskRecord, history: deque[str]) -> None:
         history.append(f"user:{msg}")
 
 
-async def _snapshot_browser(browser: Any, session_id: str, allowed_domains: list[str]) -> dict[str, Any]:
+async def _snapshot_browser(
+    browser: Any, session_id: str, allowed_domains: list[str]
+) -> dict[str, Any]:
+    log.info("[agent_loop] _snapshot_browser: entering, calling browser.snapshot")
     try:
-        return await browser.snapshot(session_id, allowed_domains)
+        result = await browser.snapshot(session_id, allowed_domains)
+        log.info("[agent_loop] _snapshot_browser: completed OK")
+        return result
     except TypeError:
+        log.info("[agent_loop] _snapshot_browser: TypeError fallback")
         return await browser.snapshot(session_id)
 
 
@@ -369,7 +630,19 @@ async def _execute_browser(
         await browser.execute(session_id, action, cmds)
 
 
-async def _capture_model_screenshot(browser: Any, session_id: str, allowed_domains: list[str]) -> tuple[bytes, str]:
+async def _capture_model_screenshot(
+    browser: Any, session_id: str, allowed_domains: list[str]
+) -> tuple[bytes, str]:
+    # Prefer the direct-CDP fast path (~50-150ms) over the annotated
+    # subprocess path (~200-800ms). The model only needs pixels; the @e1/@e2
+    # refs it reasons about come from the snapshot, not from image annotations.
+    # Annotated screenshots are reserved for the approval-gate UI display.
+    direct_capture = getattr(browser, "screenshot_png_bytes", None)
+    if direct_capture is not None:
+        try:
+            return await direct_capture(session_id), "image/png"
+        except BrowserError:
+            pass
     if getattr(browser, "screenshot_annotated", None):
         try:
             shot = await browser.screenshot_annotated(session_id, allowed_domains)
@@ -379,11 +652,6 @@ async def _capture_model_screenshot(browser: Any, session_id: str, allowed_domai
             return shot[0], shot[1]
         if isinstance(shot, bytes):
             return shot, "image/png"
-
-    direct_capture = getattr(browser, "screenshot_png_bytes", None)
-    if direct_capture is not None:
-        return await direct_capture(session_id), "image/png"
-
     return b"", "image/png"
 
 
@@ -431,7 +699,9 @@ async def _handle_manual_takeover(
 
     previous_hash = getattr(rec, "last_observation_hash", None)
     if previous_hash == observation_hash:
-        await _emit_status(rec, "Paused after manual browser input; auto-resuming after idle.", "warn")
+        await _emit_status(
+            rec, "Paused after manual browser input; auto-resuming after idle.", "warn"
+        )
         await asyncio.sleep(float(getattr(app.state, "manual_takeover_idle_seconds", 30.0)))
         return False
 
@@ -487,7 +757,7 @@ async def _save_approval_screenshot(
     return str(path)
 
 
-async def _discard_token(delta: str) -> None:
+async def _discard_token(delta: str, *args: Any, **kwargs: Any) -> None:
     _ = delta
 
 
@@ -508,7 +778,13 @@ def _ordered_provider_clients(app: FastAPI, rec: TaskRecord) -> list[Any]:
 
 
 async def _warmup_providers(app: FastAPI, rec: TaskRecord) -> None:
-    """Prime provider auth before the first vision call (avoids flaky first-request 401s)."""
+    """Prime provider auth before the first vision call (avoids flaky first-request 401s).
+
+    Runs only once per orchestrator process lifetime.  Subsequent tasks skip the
+    health-check API call (~200–500 ms) because credentials are already primed.
+    """
+    if getattr(app.state, "providers_warmed", False):
+        return
     for client in _ordered_provider_clients(app, rec):
         health = getattr(client, "health_check", None)
         if health is None:
@@ -517,20 +793,35 @@ async def _warmup_providers(app: FastAPI, rec: TaskRecord) -> None:
             await health()
         except ProviderError:
             pass
+        app.state.providers_warmed = True
         return
 
 
-def _effective_allowed_domains(configured: list[str], snap_dict: dict[str, Any]) -> list[str]:
+def _effective_allowed_domains(
+    configured: list[str],
+    snap_dict: dict[str, Any],
+    active_tabs: list[dict[str, Any]] | None = None,
+) -> list[str]:
     placeholder = {"example.com"}
-    if configured and set(configured) - placeholder:
-        return list(configured)
+    merged = set(configured)
     host = _host_from_snapshot(snap_dict)
     if host:
-        merged = list(configured)
-        if host not in merged:
-            merged.append(host)
-        return merged
-    return list(configured) if configured else ["example.com"]
+        merged.add(host)
+    if active_tabs:
+        for tab in active_tabs:
+            url = tab.get("url")
+            if isinstance(url, str) and url:
+                try:
+                    from urllib.parse import urlparse
+
+                    hostname = urlparse(url).hostname
+                    if hostname:
+                        merged.add(hostname.lower())
+                except Exception:
+                    pass
+    if len(merged) > 1 and "example.com" in merged:
+        merged.remove("example.com")
+    return list(merged) if merged else ["example.com"]
 
 
 def _host_from_snapshot(snap_dict: dict[str, Any]) -> str | None:
@@ -610,6 +901,7 @@ async def _complete_with_limits(
     def _reset_streamer() -> None:
         if original_streamer and hasattr(original_streamer, "_buffer"):
             original_streamer._buffer = ""
+            original_streamer._emitted_length = 0
             original_streamer._closed = False
             original_streamer.emitted = False
 
@@ -647,12 +939,16 @@ async def _complete_with_limits(
                     last_error = e
                     rate_limit_retries += 1
                     if rate_limit_retries <= 3:
-                        log.warning("[agent_loop] Rate limit hit for %s, retrying in 60s (attempt %d/3)...", client.provider, rate_limit_retries)
+                        log.warning(
+                            "[agent_loop] Rate limit hit for %s, retrying in 60s (attempt %d/3)...",
+                            client.provider,
+                            rate_limit_retries,
+                        )
                         for sec in range(60, 0, -10):
                             await _emit_status(
                                 rec,
                                 f"Rate limit hit for {client.provider}. Retrying in {sec}s...",
-                                "warn"
+                                "warn",
                             )
                             # Responsive cancellation-friendly sleep
                             for _ in range(5):
@@ -761,6 +1057,7 @@ async def _get_active_tabs(port: int | None) -> list[dict[str, Any]]:
     if not port:
         return []
     import httpx
+
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
             res = await client.get(f"http://127.0.0.1:{port}/json")
@@ -769,12 +1066,42 @@ async def _get_active_tabs(port: int | None) -> list[dict[str, Any]]:
                 tabs = []
                 for t in targets:
                     if isinstance(t, dict) and t.get("type") == "page":
-                        tabs.append({
-                            "title": t.get("title", ""),
-                            "url": t.get("url", "")
-                        })
+                        tabs.append({"title": t.get("title", ""), "url": t.get("url", "")})
                 return tabs
     except Exception:
         pass
     return []
 
+
+_CONVERSATIONAL_PATTERNS: tuple[str, ...] = (
+    "hold on", "wait a sec", "wait a moment", "give me a sec",
+    "one moment", "just a moment", "hang on", "hold up", "pause",
+    "stop", "don't do anything", "do nothing", "stay",
+    "let me", "i need to", "i'll", "i will",
+    "not yet", "don't start", "don't go", "don't proceed",
+)
+
+
+def _latest_user_message(history: deque[str]) -> str | None:
+    """Return the most recent user message from the history deque."""
+    for entry in reversed(history):
+        if isinstance(entry, str) and entry.startswith("user:"):
+            return entry.removeprefix("user:")
+    return None
+
+
+def _is_conversational_message(text: str) -> bool:
+    """Check if a user message is conversational rather than action-oriented.
+
+    Returns True for messages like "hold on", "wait a moment", etc. that don't
+    require a browser action — just a text reply.
+    """
+    lower = text.lower().strip()
+    # Very short messages are likely conversational
+    if len(lower.split()) <= 3:
+        return any(p in lower for p in _CONVERSATIONAL_PATTERNS)
+    # Longer messages: check for strong conversational indicators
+    for p in _CONVERSATIONAL_PATTERNS:
+        if p in lower:
+            return True
+    return False
