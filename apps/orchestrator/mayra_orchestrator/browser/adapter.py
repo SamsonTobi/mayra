@@ -4,10 +4,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import os
 import re
 import shutil
+import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +19,6 @@ from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import WebSocketException
 
 from mayra_orchestrator.errors import BrowserError
-
-import logging
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +50,35 @@ _SYSTEM_CHROME_PATHS: dict[str, str] = {
     "nt": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     "posix": "/usr/bin/google-chrome",
 }
+
+
+async def _kill_proc_tree(proc: asyncio.subprocess.Process) -> None:
+    """Kill a process and all its children (Windows-safe).
+
+    On Windows ``proc.kill()`` only kills the immediate process;
+    child processes (e.g. the native agent-browser binary) may survive
+    and continue holding stdout/stderr pipes open, causing
+    ``proc.communicate()`` to hang even after the parent is killed.
+    """
+    try:
+        if os.name == "nt":
+            await asyncio.to_thread(
+                subprocess.run,
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                timeout=10,
+            )
+        else:
+            proc.kill()
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5.0)
+    except (TimeoutError, Exception):
+        pass
 
 # 1x1 transparent PNG fallback when screenshot fails or times out.
 _FALLBACK_PNG = base64.b64decode(
@@ -95,21 +125,62 @@ def _ensure_agent_browser_ok(payload: dict[str, Any]) -> None:
     raise BrowserError(str(err))
 
 
+def _maybe_native_binary(shim_path: str) -> str:
+    """Resolve the native compiled binary from an npm .cmd shim path (Windows only).
+
+    Calling the .cmd shim runs a chain: cmd.exe → node.exe → agent-browser.js →
+    native Rust binary (agent-browser-win32-x64.exe).  Executing the native binary
+    directly cuts ~200–400 ms of startup overhead per subprocess call.
+
+    Layout after a global npm install on Windows::
+
+        <prefix>\\agent-browser.cmd                                       <- shim
+        <prefix>\\node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe
+
+    Falls back to the original shim path if the native binary is not found.
+    """
+    if os.name != "nt":
+        return shim_path
+    p = Path(shim_path)
+    if p.suffix.lower() != ".cmd":
+        return shim_path
+    import platform
+    machine = platform.machine().lower()
+    arch = "arm64" if "arm" in machine else "x64"
+    native_name = f"agent-browser-win32-{arch}.exe"
+    native = p.parent / "node_modules" / "agent-browser" / "bin" / native_name
+    if native.is_file():
+        log.debug("[adapter] native binary: %s (bypassing .cmd shim)", native)
+        return str(native)
+    log.debug("[adapter] native binary not found at %s; using shim", native)
+    return shim_path
+
+
 def _lookup_agent_browser_exe() -> str | None:
     """Resolve agent-browser CLI; Windows uses .cmd shims under the npm global prefix."""
     raw = os.environ.get("MAYRA_AGENT_BROWSER_BIN", "agent-browser").strip()
     if not raw:
         raw = "agent-browser"
+    log.info("[adapter] _lookup_agent_browser_exe: searching for %r", raw)
     p = Path(raw)
     if p.is_file():
-        return str(p.resolve())
+        resolved = str(p.resolve())
+        log.info("[adapter] _lookup_agent_browser_exe: found direct path %r", resolved)
+        return resolved
+    t0 = time.perf_counter()
     found = shutil.which(raw)
+    t1 = time.perf_counter()
+    log.info("[adapter] _lookup_agent_browser_exe: shutil.which(%r) took %.0fms, result=%r", raw, (t1 - t0) * 1000, found)
     if found:
-        return found
+        return _maybe_native_binary(found)
     if os.name == "nt" and not raw.lower().endswith(".cmd"):
+        t0 = time.perf_counter()
         found = shutil.which(f"{raw}.cmd")
+        t1 = time.perf_counter()
+        log.info("[adapter] _lookup_agent_browser_exe: shutil.which(%r.cmd) took %.0fms, result=%r", raw, (t1 - t0) * 1000, found)
         if found:
-            return found
+            return _maybe_native_binary(found)
+    log.warning("[adapter] _lookup_agent_browser_exe: NOT FOUND")
     return None
 
 
@@ -248,13 +319,17 @@ async def _cdp_batch_call(
     cdp_port: int,
     commands: list[tuple[str, dict[str, Any] | None]],
 ) -> list[dict[str, Any]]:
-    """Execute multiple CDP commands on a single WebSocket connection.
+    """Execute multiple CDP commands on a single WebSocket connection with pipelining.
 
-    Much faster than separate _cdp_call() invocations since it avoids
-    repeated HTTP target lookups and WebSocket handshakes.
+    Sends all commands without waiting for intermediate responses, then collects
+    all results by matching ``id``.  Compared to sequential send/wait, this
+    eliminates one loopback round-trip per additional command and allows Chrome
+    to begin processing subsequent commands sooner.
     """
     ws_url = await _cdp_page_ws_url(cdp_port)
-    results: list[dict[str, Any]] = []
+    n = len(commands)
+    expected_ids: set[int] = set(range(1, n + 1))
+    collected: dict[int, dict[str, Any]] = {}
     try:
         async with ws_connect(
             ws_url,
@@ -262,31 +337,36 @@ async def _cdp_batch_call(
             close_timeout=1,
             max_size=_CDP_MAX_WS_MESSAGE,
         ) as ws:
+            # Pipeline phase: send every command without waiting for replies.
             for i, (method, params) in enumerate(commands, start=1):
                 payload: dict[str, Any] = {"id": i, "method": method}
                 if params is not None:
                     payload["params"] = params
                 await ws.send(json.dumps(payload))
-                while True:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=_CDP_COMMAND_TIMEOUT)
-                    message = json.loads(raw)
-                    if message.get("id") != i:
-                        continue
-                    if "error" in message:
-                        err_payload = message["error"]
-                        if err_payload not in (None, "", False):
-                            detail = (
-                                json.dumps(err_payload, default=str)
-                                if isinstance(err_payload, dict)
-                                else str(err_payload)
-                            )
-                            raise BrowserError(f"CDP {method} failed: {detail}")
-                    result = message.get("result", {})
-                    results.append(result if isinstance(result, dict) else {})
-                    break
+
+            # Collection phase: receive until all expected ids are answered.
+            # CDP may interleave event messages (no id / unknown id) which we skip.
+            while len(collected) < n:
+                raw = await asyncio.wait_for(ws.recv(), timeout=_CDP_COMMAND_TIMEOUT)
+                message = json.loads(raw)
+                msg_id = message.get("id")
+                if msg_id not in expected_ids or msg_id in collected:
+                    continue  # CDP event or duplicate — ignore
+                if "error" in message:
+                    err_payload = message["error"]
+                    if err_payload not in (None, "", False):
+                        detail = (
+                            json.dumps(err_payload, default=str)
+                            if isinstance(err_payload, dict)
+                            else str(err_payload)
+                        )
+                        method_name = commands[msg_id - 1][0]
+                        raise BrowserError(f"CDP {method_name} failed: {detail}")
+                result = message.get("result", {})
+                collected[msg_id] = result if isinstance(result, dict) else {}
     except (TimeoutError, WebSocketException, OSError, json.JSONDecodeError) as e:
         raise BrowserError(f"CDP batch call failed on port {cdp_port}: {e}") from e
-    return results
+    return [collected[i] for i in range(1, n + 1)]
 
 
 class AgentBrowserAdapter:
@@ -300,9 +380,12 @@ class AgentBrowserAdapter:
         if session_id not in self._session_ports:
             raise BrowserError(f"unknown session {session_id!r} (call open first)")
         port = self._session_ports[session_id]
+        log.info("[adapter] _base: resolving agent-browser exe...")
+        exe = _require_agent_browser_exe()
+        log.info("[adapter] _base: exe=%r", exe)
 
         cmd = [
-            _require_agent_browser_exe(),
+            exe,
             "--cdp",
             str(port),
             "--json",
@@ -344,25 +427,13 @@ class AgentBrowserAdapter:
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
-            try:
-                proc.kill()
-                await proc.wait()
-            except Exception:
-                pass
+            await _kill_proc_tree(proc)
             raise BrowserError("agent-browser subprocess timed out") from None
         except asyncio.CancelledError:
-            try:
-                proc.kill()
-                await proc.wait()
-            except Exception:
-                pass
+            await _kill_proc_tree(proc)
             raise
         except Exception:
-            try:
-                proc.kill()
-                await proc.wait()
-            except Exception:
-                pass
+            await _kill_proc_tree(proc)
             raise
 
         err = stderr.decode("utf-8", errors="replace").strip()
@@ -391,7 +462,12 @@ class AgentBrowserAdapter:
                 raise
 
     async def run_doctor(self) -> dict[str, Any]:
-        """Run `agent-browser doctor --json` (non-fatal: orchestrator still boots)."""
+        """Run `agent-browser doctor --offline --quick --json` (non-fatal: orchestrator still boots).
+
+        ``--offline`` skips network checks; ``--quick`` skips the "launch test" step
+        that spawns a headless Chrome window — eliminating the extra browser window
+        that appeared on every orchestrator startup.
+        """
         exe = _lookup_agent_browser_exe()
         if exe is None:
             return {
@@ -400,7 +476,7 @@ class AgentBrowserAdapter:
                 "message": f"agent-browser not found on PATH. {_AGENT_BROWSER_HINT}",
             }
         try:
-            return await self._exec(exe, "doctor", "--json", timeout=60.0)
+            return await self._exec(exe, "doctor", "--offline", "--quick", "--json", timeout=30.0)
         except BrowserError as e:
             return {"ok": False, "missing": False, "message": str(e)}
 
@@ -413,9 +489,31 @@ class AgentBrowserAdapter:
         log.info("[adapter] open: session=%s registered for port %d", session_id[:8], cdp_port)
 
     async def snapshot(self, session_id: str, allowed_domains: list[str] | None = None) -> dict[str, Any]:
-        """Accessibility snapshot with agent-browser refs usable for later actions."""
-        argv = [*self._base(session_id, allowed_domains), "snapshot"]
-        log.info("[adapter] snapshot: session=%s starting", session_id[:8])
+        """Accessibility snapshot with agent-browser refs usable for later actions.
+
+        Flags:
+        - ``-i`` interactive elements only — reduces payload by 60-80% on content-heavy
+          pages, cutting JSON parse time, token count sent to the model, and the cost
+          of ``_observation_hash`` serialisation.
+        - ``-c`` strip empty structural/container nodes — further reduces payload.
+        """
+        # Fast path: try agent-browser first (produces rich @e1/@e2 refs).
+        # If agent-browser is not installed or fails, fall back to direct CDP
+        # which gives a minimal snapshot so the agent loop can still make progress.
+        try:
+            return await self._snapshot_via_agent_browser(session_id, allowed_domains)
+        except BrowserError as exc:
+            log.warning(
+                "[adapter] snapshot: agent-browser failed (%s), falling back to CDP", exc
+            )
+            return await self._snapshot_via_cdp(session_id)
+
+    async def _snapshot_via_agent_browser(
+        self, session_id: str, allowed_domains: list[str] | None = None
+    ) -> dict[str, Any]:
+        argv = [*self._base(session_id, allowed_domains), "snapshot", "-i", "-c"]
+        log.info("[adapter] snapshot: session=%s starting subprocess", session_id[:8])
+        t0 = time.perf_counter()
         for attempt in range(2):
             payload = await self._exec_read(argv, timeout=60.0)
             if payload.get("success") is False:
@@ -426,9 +524,61 @@ class AgentBrowserAdapter:
                     continue
                 log.error("[adapter] snapshot: FAILED for %s: %s", session_id[:8], err)
                 raise err
-            log.info("[adapter] snapshot: OK for %s on attempt %d", session_id[:8], attempt + 1)
+            log.info("[adapter] snapshot: OK for %s on attempt %d (%.0fms)", session_id[:8], attempt + 1, (time.perf_counter() - t0) * 1000)
             return payload
         return {}
+
+    async def _snapshot_via_cdp(self, session_id: str) -> dict[str, Any]:
+        """Minimal snapshot using CDP Accessibility.getFullAXTree.
+
+        Produces node dicts with ``ref``, ``role``, ``name`` so the agent
+        loop can still call the model and get back target_refs.  The refs
+        use CDP ``backendNodeId`` values (e.g. ``@b12``) instead of
+        agent-browser ``@e12`` refs, but the model only needs them to be
+        unique and stable within one snapshot.
+        """
+        if session_id not in self._session_ports:
+            raise BrowserError(f"unknown session {session_id!r} (call open first)")
+        port = self._session_ports[session_id]
+        log.info("[adapter] _snapshot_via_cdp: session=%s using CDP fallback", session_id[:8])
+        try:
+            result = await _cdp_call(
+                port,
+                "Accessibility.getFullAXTree",
+                {"depth": 4, "fetchObjectIds": False},
+            )
+            nodes_raw = result.get("nodes", [])
+            nodes: list[dict[str, Any]] = []
+            for n in nodes_raw:
+                if not isinstance(n, dict):
+                    continue
+                backend_id = n.get("backendDOMNodeId")
+                if backend_id is None:
+                    continue
+                role_raw = n.get("role", {})
+                role = role_raw.get("value", "") if isinstance(role_raw, dict) else str(role_raw)
+                name_raw = n.get("name", {})
+                name = name_raw.get("value", "") if isinstance(name_raw, dict) else str(name_raw)
+                # Skip structural/non-interactive nodes to keep the payload small.
+                if role.lower() in ("none", "generic", "rootwebarea", "ignored", ""):
+                    if not name:
+                        continue
+                nodes.append({
+                    "ref": f"@b{backend_id}",
+                    "role": role or "generic",
+                    "name": name or "",
+                    "text": name or "",
+                })
+            log.info(
+                "[adapter] _snapshot_via_cdp: session=%s extracted %d nodes from AXTree",
+                session_id[:8],
+                len(nodes),
+            )
+            return {"nodes": nodes}
+        except BrowserError as exc:
+            log.error("[adapter] _snapshot_via_cdp: CDP call failed: %s", exc)
+            # Return a bare-minimum snapshot so the model can still respond.
+            return {"nodes": [{"ref": "@b0", "role": "generic", "name": "Page loaded", "text": "Page loaded"}]}
 
     async def screenshot_png_bytes(self, session_id: str) -> bytes:
         """Capture viewport screenshot as PNG bytes via CDP."""

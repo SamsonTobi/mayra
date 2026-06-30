@@ -1,6 +1,7 @@
 """CLI entrypoint: `uv run python -m mayra_orchestrator` (dev server)."""
 from __future__ import annotations
 
+import logging
 import os
 import socket
 import sys
@@ -44,8 +45,18 @@ def _parse_cli() -> tuple[int, str, Path]:
 def main() -> None:
     if sys.platform == "win32":
         import asyncio
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        
+        # ProactorEventLoop uses IOCP which correctly handles subprocess pipes
+        # on Windows. SelectorEventLoop uses select() which only supports
+        # sockets on Windows — causing proc.communicate() to hang forever.
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+        stream=sys.stderr,
+    )
+
     port, token, data_dir = _parse_cli()
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "screenshots").mkdir(parents=True, exist_ok=True)
