@@ -7,7 +7,6 @@ import { SupabaseBootstrap } from "@/providers/supabase-bootstrap";
 import { BrowserShellHint } from "@/components/common/BrowserShellHint";
 import { AppLayout } from "@/components/common/AppLayout";
 import { WebAuthGate } from "@/components/common/WebAuthGate";
-import { WebLayout } from "@/components/common/WebLayout";
 import { isWebMode } from "@/lib/mode";
 
 export const metadata: Metadata = {
@@ -32,7 +31,7 @@ export default function RootLayout({
               <SupabaseBootstrap />
               <BrowserShellHint />
               <WebAuthGate>
-                {isWebMode() ? <WebLayout>{children}</WebLayout> : <AppLayout>{children}</AppLayout>}
+                {isWebMode() ? <>{children}</> : <AppLayout>{children}</AppLayout>}
               </WebAuthGate>
             </OrchestratorProvider>
           </CloudAuthProvider>
