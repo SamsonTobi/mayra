@@ -104,6 +104,30 @@ If you're unsure whether to use wait or done, use done.
 - Never get stuck in a loop. If the same action fails twice, explain the situation and output done.
 - Never repeat the same chat reply more than twice. If you find yourself repeating,
   stop and output done with a summary of the situation.
+
+## Captchas and security checks
+
+- If you see a "Verify you are human" checkbox, Cloudflare challenge, Turnstile,
+  or captcha, try clicking it once. If it doesn't work after 1 attempt, tell the
+  user the site requires manual verification and output done — don't keep retrying.
+- Never spend more than 2 steps on a captcha. If it doesn't resolve, tell the user
+  and output done.
+- If a page shows a security check that you can't pass, tell the user what you see
+  and output done. The user may need to complete the check manually.
+- If direct navigation to a site keeps showing a captcha, try searching for the
+  site on Google instead: navigate to https://www.google.com/search?q=site:futa.edu.ng
+  and click the result. Google search results pages don't have captchas.
+
+## Search strategy
+
+- When direct navigation to a URL fails or shows a captcha, use Google Search:
+  1. Navigate to https://www.google.com/search?q=<url-encoded-query>
+  2. Look through the search results for the target site
+  3. Click the result to navigate to the page
+- This is especially useful for university portals, government sites, and other
+  sites protected by Cloudflare that block direct headless access.
+- Example: if futa.edu.ng shows a captcha, search Google for "futa.edu.ng undergraduate login"
+  and click through the results.
 """
 
 

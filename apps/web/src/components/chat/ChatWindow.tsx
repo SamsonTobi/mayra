@@ -15,6 +15,7 @@ import { CloudLoginDialog } from "./CloudLoginDialog";
 import { LocalCloudToggle, type TaskTarget } from "./LocalCloudToggle";
 import { isWebMode, isDesktopMode, getCloudOrchestratorUrl } from "@/lib/mode";
 import { useCloudAuth } from "@/providers/cloud-auth-context";
+import { CloudLivePreview } from "@/components/live/CloudLivePreview";
 import type { ChatMessage } from "@mayra/contracts";
 
 function conversationHistory(
@@ -72,6 +73,7 @@ export function ChatWindow() {
   const cloudAuth = useCloudAuth();
   const webMode = isWebMode();
   const [taskId, setTaskId] = useState<string | null>(null);
+  const [cloudSessionId, setCloudSessionId] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const lastProviderRef = useRef("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -230,6 +232,7 @@ export function ChatWindow() {
           try {
             const session = await activeClient.connectSession();
             sessionId = session.session_id;
+            setCloudSessionId(session.session_id);
           } catch (e) {
             appendSystemMessage(
               e instanceof Error ? `Cloud browser launch failed: ${e.message}` : "Cloud browser launch failed.",
@@ -314,21 +317,19 @@ export function ChatWindow() {
   const budgetPaused = Boolean(
     taskId && done && lastDoneStatus === "budget_exhausted",
   );
-  // Task ended due to an issue (not success or budget exhaustion).
+  // Task ended due to an issue (not success, budget exhaustion, or user-initiated abort).
   // Show a banner with a Continue button so the user can send a follow-up.
   const taskEnded = Boolean(
     taskId &&
       done &&
-      (failed || lastDoneStatus === "aborted" || lastDoneStatus === "degraded"),
+      (failed || lastDoneStatus === "degraded"),
   );
   const taskEndedMessage =
-    lastDoneStatus === "aborted"
-      ? "The agent was stopped."
-      : lastDoneStatus === "degraded"
-        ? "The agent finished with issues."
-        : "The agent ran into an issue.";
+    lastDoneStatus === "degraded"
+      ? "The agent finished with issues."
+      : "The agent ran into an issue.";
   const hasMessages = messages.length > 0;
-  const showPreview = previewOpen && Boolean(browserSession.sessionId);
+  const showPreview = previewOpen && (webMode ? Boolean(cloudSessionId) : Boolean(browserSession.sessionId));
 
   const sessionOptions = useMemo(() => {
     const opts = [{ value: "", label: "Select Browser Session" }];
@@ -393,8 +394,7 @@ export function ChatWindow() {
             <div
               style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
             >
-              {/* Hide the browser session dropdown + preview toggle in web mode
-                  (cloud mode manages Chromium automatically — no local session selection) */}
+              {/* Hide the browser session dropdown in web mode (cloud manages Chromium automatically) */}
               {!webMode && (
                 <>
                   <span
@@ -410,30 +410,31 @@ export function ChatWindow() {
                     placeholder="Select Browser Session"
                     triggerStyle={{ minWidth: "180px" }}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setPreviewOpen(!previewOpen)}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: previewOpen ? "var(--fg)" : "var(--muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      padding: "0.4rem",
-                      borderRadius: "8px",
-                      transition: "all 0.2s",
-                    }}
-                    className="preview-toggle-btn"
-                    title={
-                      previewOpen ? "Hide browser preview" : "Show browser preview"
-                    }
-                  >
-                    <SidebarIcon />
-                  </button>
                 </>
               )}
+              {/* Show the preview toggle in both modes */}
+              <button
+                type="button"
+                onClick={() => setPreviewOpen(!previewOpen)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: previewOpen ? "var(--fg)" : "var(--muted)",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "0.4rem",
+                  borderRadius: "8px",
+                  transition: "all 0.2s",
+                }}
+                className="preview-toggle-btn"
+                title={
+                  previewOpen ? "Hide browser preview" : "Show browser preview"
+                }
+              >
+                <SidebarIcon />
+              </button>
               {/* Web mode: show a warm-up indicator while the orchestrator is cold-starting */}
               {webMode && cloudAuth.validating && (
                 <span style={{ fontSize: "0.75rem", color: "var(--muted, #888)" }}>
@@ -622,7 +623,7 @@ export function ChatWindow() {
       />
       </div>
 
-      {/* Right Browser Viewport Pane — hidden in web mode (requires local CDP) */}
+      {/* Right Browser Viewport Pane */}
       {showPreview && !webMode && (
         <div
           style={{
@@ -637,6 +638,24 @@ export function ChatWindow() {
           <LivePreviewPanel
             screenshotPath={lastShot}
             sessionId={browserSession.sessionId}
+            client={activeClient}
+          />
+        </div>
+      )}
+      {/* Cloud live preview — web mode only */}
+      {showPreview && webMode && cloudSessionId && (
+        <div
+          style={{
+            width: "400px",
+            height: "100%",
+            overflowY: "auto",
+            padding: "1rem",
+            flexShrink: 0,
+            background: "var(--bg)",
+          }}
+        >
+          <CloudLivePreview
+            sessionId={cloudSessionId}
             client={activeClient}
           />
         </div>

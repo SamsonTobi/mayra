@@ -1654,7 +1654,15 @@ async def _update_browser_overlay(
     Silent no-op if the browser adapter doesn't expose ``update_overlay``
     (e.g. ``_StubBrowser``, ``FakeBrowser`` in tests, or any future adapter
     that opts out). Never raises — overlay failures must not break the loop.
+
+    In cloud mode, the overlay is disabled because it appears in screenshots
+    and confuses the model (it sees "Reading page" text and thinks the page
+    is still loading).
     """
+    # Skip overlay in cloud mode — the status pill appears in headless
+    # screenshots and the model misinterprets it as page content.
+    if getattr(browser, "launcher", None) is not None:
+        return
     update = getattr(browser, "update_overlay", None)
     if update is None:
         return

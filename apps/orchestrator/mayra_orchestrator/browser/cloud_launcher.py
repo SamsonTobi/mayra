@@ -51,7 +51,7 @@ def _chromium_executable() -> str:
 class CloudLauncher:
     """Manages headless Chromium processes in the container."""
 
-    def __init__(self, flags: str = "--no-sandbox,--headless=new,--disable-gpu,--disable-dev-shm-usage") -> None:
+    def __init__(self, flags: str = "--no-sandbox,--headless=new,--disable-gpu,--disable-dev-shm-usage,--disable-blink-features=AutomationControlled,--window-size=1280,800") -> None:
         self._flags = [f.strip() for f in flags.split(",") if f.strip()]
         # Map of cdp_port → asyncio.subprocess.Process
         self._processes: dict[int, asyncio.subprocess.Process] = {}

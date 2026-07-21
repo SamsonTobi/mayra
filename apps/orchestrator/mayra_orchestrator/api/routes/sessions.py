@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import time
 import uuid
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from pydantic import BaseModel
 
@@ -34,7 +35,72 @@ from mayra_orchestrator.errors import BrowserError
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1/sessions", tags=["sessions"], dependencies=[Depends(require_bearer)])
+router = APIRouter(
+    prefix="/v1/sessions",
+    tags=["sessions"],
+    dependencies=[Depends(require_bearer)],
+)
+
+
+@router.get("/{session_id}/live-screenshot")
+async def live_screenshot(
+    session_id: str,
+    request: Request,
+) -> StreamingResponse:
+    """Get a fresh screenshot of the current page for live preview.
+
+    Returns PNG bytes directly (no save to disk). Used by the web UI's
+    live browser view so the user can see what the agent sees and
+    manually interact with captchas.
+    """
+    bucket = request.app.state.browser_sessions
+    rec = bucket.by_id.get(session_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    browser = request.app.state.session_browser
+    try:
+        png = await browser.screenshot_png_bytes(session_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"screenshot failed: {exc}") from exc
+    return StreamingResponse(io.BytesIO(png), media_type="image/png")
+
+
+@router.post("/{session_id}/live-click")
+async def live_click(
+    session_id: str,
+    body: SessionInteractRequest,
+    request: Request,
+) -> JSONResponse:
+    """Manual click on the live browser page — for captchas the agent can't handle.
+
+    The user clicks on the live screenshot in the web UI, and the coordinates
+    are sent here. This dispatches a CDP mouse click at those coordinates.
+    """
+    bucket = request.app.state.browser_sessions
+    rec = bucket.by_id.get(session_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    if body.action != "click" or body.x is None or body.y is None:
+        raise HTTPException(status_code=422, detail="live-click requires action=click with x and y")
+    port = rec.cdp_port
+    try:
+        await _cdp_call(port, "Input.dispatchMouseEvent", {
+            "type": "mousePressed",
+            "x": body.x,
+            "y": body.y,
+            "button": "left",
+            "clickCount": 1,
+        })
+        await _cdp_call(port, "Input.dispatchMouseEvent", {
+            "type": "mouseReleased",
+            "x": body.x,
+            "y": body.y,
+            "button": "left",
+            "clickCount": 1,
+        })
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"click failed: {exc}") from exc
+    return JSONResponse(status_code=200, content={"ok": True})
 
 
 @dataclass

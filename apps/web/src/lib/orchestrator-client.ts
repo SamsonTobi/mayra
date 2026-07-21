@@ -322,6 +322,31 @@ export class OrchestratorClient {
     return (await r.json()) as SessionSnapshotResult;
   }
 
+  /** Get a live screenshot of the browser page (PNG bytes). For the web UI's live browser view. */
+  async liveScreenshotUrl(sessionId: string): Promise<string> {
+    const r = await fetch(`${this.base()}/v1/sessions/${sessionId}/live-screenshot`, {
+      headers: this.headers(),
+    });
+    this.checkAuth(r);
+    if (!r.ok) return "";
+    const blob = await r.blob();
+    return URL.createObjectURL(blob);
+  }
+
+  /** Manual click on the live browser page (for captchas the agent can't handle). */
+  async liveClick(sessionId: string, x: number, y: number): Promise<void> {
+    const r = await fetch(`${this.base()}/v1/sessions/${sessionId}/live-click`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ action: "click", x, y }),
+    });
+    this.checkAuth(r);
+    if (!r.ok) {
+      const t = await this.errorBody(await r.text());
+      throw new Error(`liveClick failed: ${r.status} ${t}`);
+    }
+  }
+
   async validateSettings(
     input: ValidateSettingsInput,
   ): Promise<ValidateSettingsResult> {

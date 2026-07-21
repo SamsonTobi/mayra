@@ -57,6 +57,18 @@ class CloudBrowserAdapter:
                 # No running event loop — best-effort sync cleanup
                 log.debug("[cloud_adapter] no running loop for Chrome kill on port %d", port)
 
+    async def open(self, cdp_port: int, session_id: str) -> None:
+        """Attach to Chromium CDP port — skip overlay installation in cloud mode.
+
+        The overlay (status pill) appears in headless screenshots and confuses
+        the model — it sees 'Reading page' text and thinks the page is loading.
+        """
+        from mayra_orchestrator.browser.adapter import _probe_cdp_endpoint
+        log.info("[cloud_adapter] open: session=%s port=%d (no overlay)", session_id[:8], cdp_port)
+        await _probe_cdp_endpoint(cdp_port)
+        self._inner._session_ports[session_id] = cdp_port
+        log.info("[cloud_adapter] open: session=%s registered for port %d", session_id[:8], cdp_port)
+
     async def close_all(self) -> None:
         """Close all CDP sessions and kill all Chrome processes."""
         await self._inner.close_all()
