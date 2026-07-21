@@ -123,7 +123,7 @@ export function reduceChatStreamEvent(
           "ts" in msg && typeof msg.ts === "string"
             ? msg
             : { ...msg, ts: nowIso() };
-        messages.push(withTs);
+        messages.push(withTs as ChatMessage);
       }
     } catch {
       /* ignore malformed */
@@ -150,7 +150,7 @@ export function reduceChatStreamEvent(
           "ts" in msg && typeof msg.ts === "string"
             ? msg
             : { ...msg, ts: nowIso() };
-        messages.push(withTs);
+        messages.push(withTs as ChatMessage);
       }
     } catch {
       /* ignore */
@@ -165,6 +165,7 @@ export function reduceChatStreamEvent(
         provider?: string;
         model?: string;
         observation_screenshot_path?: string;
+        observation_screenshot_url?: string;
       };
       if (parsed.kind !== "step_meta") {
         return { messages, terminal: "none" };
@@ -178,7 +179,7 @@ export function reduceChatStreamEvent(
             model: parsed.model ?? m.model,
             observation_screenshot_path:
               parsed.observation_screenshot_path ?? m.observation_screenshot_path,
-          };
+          } as typeof m;
           break;
         }
       }

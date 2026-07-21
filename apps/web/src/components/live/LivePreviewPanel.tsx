@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { resolveScreenshotSrc } from "@/lib/screenshot";
 
 type Props = {
   screenshotPath: string | null;
+  screenshotUrl?: string | null;
   sessionId?: string | null;
   client?: any;
 };
@@ -13,7 +15,7 @@ type Props = {
  * Renders the active browser preview and maps native user interactions
  * (clicks, typing, navigation, and scrolling) back to Chrome over CDP.
  */
-export function LivePreviewPanel({ screenshotPath, sessionId, client }: Props) {
+export function LivePreviewPanel({ screenshotPath, screenshotUrl, sessionId, client }: Props) {
   const [src, setSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [url, setUrl] = useState("");
@@ -27,23 +29,13 @@ export function LivePreviewPanel({ screenshotPath, sessionId, client }: Props) {
     }
     let cancelled = false;
     void (async () => {
-      try {
-        const mod = await import("@tauri-apps/api/core");
-        let pathForSrc = screenshotPath;
-        try {
-          pathForSrc = await mod.invoke<string>("asset_url", { path: screenshotPath });
-        } catch {
-          /* non-Tauri or validation skipped */
-        }
-        if (!cancelled) setSrc(mod.convertFileSrc(pathForSrc));
-      } catch {
-        if (!cancelled) setSrc(null);
-      }
+      const resolved = await resolveScreenshotSrc(screenshotPath, screenshotUrl);
+      if (!cancelled) setSrc(resolved);
     })();
     return () => {
       cancelled = true;
     };
-  }, [screenshotPath]);
+  }, [screenshotPath, screenshotUrl]);
 
   // Click on viewport handler
   const handleImageClick = async (event: React.MouseEvent<HTMLImageElement>) => {

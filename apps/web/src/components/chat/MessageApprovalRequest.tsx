@@ -5,10 +5,11 @@ import type { ApprovalRequestMessage } from "@mayra/contracts";
 import { postApprove } from "@/lib/orchestrator-mutations";
 import { AnnotatedScreenshot } from "@/components/common/AnnotatedScreenshot";
 import { Modal } from "@/components/common/Modal";
+import { resolveScreenshotSrc } from "@/lib/screenshot";
 
 type Props = {
   message: ApprovalRequestMessage;
-  port: number | null;
+  baseUrl: string | null;
   token: string | null;
   /** Optional file URL from Tauri convertFileSrc (F10). */
   screenshotSrc?: string | null;
@@ -16,7 +17,7 @@ type Props = {
 
 export function MessageApprovalRequest({
   message,
-  port,
+  baseUrl,
   token,
   screenshotSrc,
 }: Props) {
@@ -34,39 +35,23 @@ export function MessageApprovalRequest({
     }
     let cancelled = false;
     void (async () => {
-      try {
-        const mod = await import("@tauri-apps/api/core");
-        let pathForSrc = message.screenshot_path;
-        try {
-          pathForSrc = await mod.invoke<string>("asset_url", {
-            path: message.screenshot_path,
-          });
-        } catch {
-          /* non-Tauri or path already asset-safe */
-        }
-        if (!cancelled && typeof window !== "undefined") {
-          setResolvedScreenshotSrc(mod.convertFileSrc(pathForSrc));
-        }
-      } catch {
-        if (!cancelled && typeof window !== "undefined") {
-          setResolvedScreenshotSrc(null);
-        }
-      }
+      const src = await resolveScreenshotSrc(message.screenshot_path, message.screenshot_url);
+      if (!cancelled) setResolvedScreenshotSrc(src);
     })();
     return () => {
       cancelled = true;
     };
-  }, [message.screenshot_path, screenshotSrc]);
+  }, [message.screenshot_path, message.screenshot_url, screenshotSrc]);
 
   const decide = async (decision: "approve" | "reject") => {
-    if (port == null || token == null) {
+    if (baseUrl == null || token == null) {
       setError("Sidecar not ready");
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await postApprove(port, token, {
+      await postApprove(baseUrl, token, {
         approval_id: message.id,
         decision,
       });
