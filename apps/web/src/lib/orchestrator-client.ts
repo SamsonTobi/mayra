@@ -51,12 +51,20 @@ export type ValidateSettingsResult = {
  * baseUrl is the full origin (e.g. "http://127.0.0.1:8765" for local mode,
  * "https://mayra-xxx.modal.run" for cloud mode). In local mode, the URL
  * and token come from the Tauri sidecar handshake at runtime.
+ *
+ * onUnauthorized: optional callback fired when a 401 is received. In cloud
+ * mode, this clears the stored token and redirects to /login.
  */
 export class OrchestratorClient {
+  private readonly onUnauthorized: (() => void) | null;
+
   constructor(
     private readonly baseUrl: string,
     private readonly token: string,
-  ) {}
+    onUnauthorized?: (() => void) | null,
+  ) {
+    this.onUnauthorized = onUnauthorized ?? null;
+  }
 
   private base(): string {
     return this.baseUrl;
@@ -72,6 +80,13 @@ export class OrchestratorClient {
       Authorization: `Bearer ${this.token}`,
       "Content-Type": "application/json",
     };
+  }
+
+  /** Check if a response is a 401 and fire the onUnauthorized callback. */
+  private checkAuth(r: Response): void {
+    if (r.status === 401 && this.onUnauthorized) {
+      this.onUnauthorized();
+    }
   }
 
   private async errorBody(text: string): Promise<string> {
@@ -98,6 +113,7 @@ export class OrchestratorClient {
       headers: this.headers(),
       body: JSON.stringify(input),
     });
+    this.checkAuth(r);
     if (!r.ok) {
       const text = await this.errorBody(await r.text());
       throw new Error(`createTask failed: ${r.status} ${text}`);
@@ -111,6 +127,7 @@ export class OrchestratorClient {
     const r = await fetch(`${this.base()}/healthz`, {
       signal: this.timeoutSignal(10_000),
     });
+    this.checkAuth(r);
     if (!r.ok) {
       const t = await this.errorBody(await r.text());
       console.error(`[orchestrator-client] healthz: failed ${r.status}`, t);
@@ -136,6 +153,7 @@ export class OrchestratorClient {
       signal: this.timeoutSignal(30_000),
     });
     const elapsed = Math.round(performance.now() - start);
+    this.checkAuth(r);
     if (!r.ok) {
       const t = await this.errorBody(await r.text());
       console.error(`[orchestrator-client] connectSession: failed ${r.status} (${elapsed}ms)`, t);
@@ -161,6 +179,7 @@ export class OrchestratorClient {
       signal: this.timeoutSignal(30_000),
     });
     const elapsed = Math.round(performance.now() - start);
+    this.checkAuth(r);
     if (!r.ok) {
       const t = await this.errorBody(await r.text());
       console.error(`[orchestrator-client] connectAndVerify: failed ${r.status} (${elapsed}ms)`, t);
@@ -177,6 +196,7 @@ export class OrchestratorClient {
       headers: this.headers(),
       signal: this.timeoutSignal(10_000),
     });
+    this.checkAuth(r);
     if (!r.ok) {
       const t = await this.errorBody(await r.text());
       console.error(`[orchestrator-client] listSessions: failed ${r.status}`, t);
@@ -196,6 +216,7 @@ export class OrchestratorClient {
       signal: this.timeoutSignal(15_000),
     });
     const elapsed = Math.round(performance.now() - start);
+    this.checkAuth(r);
     if (!r.ok) {
       const t = await this.errorBody(await r.text());
       console.error(
@@ -239,6 +260,7 @@ export class OrchestratorClient {
       signal: this.timeoutSignal(15_000),
     });
     const elapsed = Math.round(performance.now() - start);
+    this.checkAuth(r);
     if (!r.ok) {
       const t = await this.errorBody(await r.text());
       console.error(
@@ -265,6 +287,7 @@ export class OrchestratorClient {
       signal: this.timeoutSignal(120_000),
     });
     const elapsed = Math.round(performance.now() - start);
+    this.checkAuth(r);
     if (!r.ok) {
       const t = await this.errorBody(await r.text());
       console.error(
@@ -291,6 +314,7 @@ export class OrchestratorClient {
       headers: this.headers(),
       body: JSON.stringify(input),
     });
+    this.checkAuth(r);
     if (!r.ok) {
       const t = await this.errorBody(await r.text());
       throw new Error(`interactSession failed: ${r.status} ${t}`);
@@ -306,6 +330,7 @@ export class OrchestratorClient {
       headers: this.headers(),
       body: JSON.stringify(input),
     });
+    this.checkAuth(r);
     if (!r.ok) {
       const t = await this.errorBody(await r.text());
       throw new Error(`validateSettings failed: ${r.status} ${t}`);
@@ -319,6 +344,7 @@ export class OrchestratorClient {
       headers: this.headers(),
       signal: this.timeoutSignal(15_000),
     });
+    this.checkAuth(r);
     if (!r.ok) {
       const t = await this.errorBody(await r.text());
       throw new Error(`listModels failed: ${r.status} ${t}`);
@@ -331,6 +357,7 @@ export class OrchestratorClient {
       method: "POST",
       headers: this.headers(),
     });
+    this.checkAuth(r);
     if (!r.ok) {
       const text = await this.errorBody(await r.text());
       throw new Error(`abort failed: ${r.status} ${text}`);
@@ -349,6 +376,7 @@ export class OrchestratorClient {
         additional_steps: input.additional_steps ?? 25,
       }),
     });
+    this.checkAuth(r);
     if (!r.ok) {
       const text = await this.errorBody(await r.text());
       throw new Error(`continueTask failed: ${r.status} ${text}`);
@@ -362,6 +390,7 @@ export class OrchestratorClient {
       headers: this.headers(),
       body: JSON.stringify({ text }),
     });
+    this.checkAuth(r);
     if (!r.ok) {
       const body = await this.errorBody(await r.text());
       throw new Error(`postTaskMessage failed: ${r.status} ${body}`);

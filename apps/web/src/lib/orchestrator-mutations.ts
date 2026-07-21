@@ -6,6 +6,7 @@ export async function postApprove(
   baseUrl: string,
   token: string,
   body: ApprovalDecision,
+  onUnauthorized?: () => void,
 ): Promise<void> {
   const r = await fetch(`${baseUrl}/v1/actions/approve`, {
     method: "POST",
@@ -15,6 +16,7 @@ export async function postApprove(
     },
     body: JSON.stringify(body),
   });
+  if (r.status === 401 && onUnauthorized) onUnauthorized();
   if (!r.ok) {
     const t = await r.text();
     throw new Error(`approve failed: ${r.status} ${t}`);

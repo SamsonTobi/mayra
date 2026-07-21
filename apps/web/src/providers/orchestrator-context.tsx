@@ -130,8 +130,8 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
 
   const client = useMemo(() => {
     if (!baseUrl || !token) return null;
-    return new OrchestratorClient(baseUrl, token);
-  }, [baseUrl, token]);
+    return new OrchestratorClient(baseUrl, token, webMode ? cloudAuth.handleUnauthorized : null);
+  }, [baseUrl, token, webMode, cloudAuth.handleUnauthorized]);
 
   // Cloud client: in web mode this is the same as `client`; in desktop mode
   // it's a separate client targeting the cloud orchestrator (when authenticated).
@@ -147,8 +147,8 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
 
   const cloudClient = useMemo(() => {
     if (!cloudBaseUrl || !cloudToken) return null;
-    return new OrchestratorClient(cloudBaseUrl, cloudToken);
-  }, [cloudBaseUrl, cloudToken]);
+    return new OrchestratorClient(cloudBaseUrl, cloudToken, cloudAuth.handleUnauthorized);
+  }, [cloudBaseUrl, cloudToken, cloudAuth.handleUnauthorized]);
 
   // Cloud is available when: web mode (always, if URL set) or desktop mode with cloud URL + auth
   const cloudAvailable = useMemo(() => {

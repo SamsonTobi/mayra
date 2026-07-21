@@ -6,6 +6,8 @@ import { postApprove } from "@/lib/orchestrator-mutations";
 import { AnnotatedScreenshot } from "@/components/common/AnnotatedScreenshot";
 import { Modal } from "@/components/common/Modal";
 import { resolveScreenshotSrc } from "@/lib/screenshot";
+import { useCloudAuthSafe } from "@/providers/cloud-auth-context";
+import { isWebMode } from "@/lib/mode";
 
 type Props = {
   message: ApprovalRequestMessage;
@@ -43,6 +45,8 @@ export function MessageApprovalRequest({
     };
   }, [message.screenshot_path, message.screenshot_url, screenshotSrc]);
 
+  const cloudAuth = useCloudAuthSafe();
+
   const decide = async (decision: "approve" | "reject") => {
     if (baseUrl == null || token == null) {
       setError("Sidecar not ready");
@@ -54,7 +58,7 @@ export function MessageApprovalRequest({
       await postApprove(baseUrl, token, {
         approval_id: message.id,
         decision,
-      });
+      }, cloudAuth?.handleUnauthorized);
       setOpen(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "approve failed");

@@ -19,6 +19,8 @@ export type CloudAuthState = {
   userId: string | null;
   login: (password: string) => Promise<void>;
   logout: () => void;
+  /** Call this when a 401 is received — clears the token and redirects to login */
+  handleUnauthorized: () => void;
   /** True while validating the stored token against the orchestrator */
   validating: boolean;
 };
@@ -154,12 +156,27 @@ export function CloudAuthProvider({ children }: { children: ReactNode }) {
     setUserId(null);
   }, []);
 
+  // Called when a 401 is received from the orchestrator (e.g. container
+  // restarted and the in-memory SessionStore lost the token).
+  // Clears the token and redirects to /login for re-authentication.
+  const handleUnauthorized = useCallback(() => {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_ID_KEY);
+    localStorage.removeItem(EXPIRES_KEY);
+    setToken(null);
+    setUserId(null);
+    if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+      window.location.href = "/login";
+    }
+  }, []);
+
   const value: CloudAuthState = {
     authenticated: mounted && token !== null,
     token,
     userId,
     login,
     logout,
+    handleUnauthorized,
     validating,
   };
 
@@ -174,4 +191,10 @@ export function useCloudAuth(): CloudAuthState {
     throw new Error("useCloudAuth must be used within CloudAuthProvider");
   }
   return v;
+}
+
+/** Safe version that returns null if no provider — for components that
+ *  only need cloud auth in web mode (tests don't wrap with CloudAuthProvider). */
+export function useCloudAuthSafe(): CloudAuthState | null {
+  return useContext(CloudAuthCtx);
 }

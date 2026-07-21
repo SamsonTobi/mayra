@@ -5,8 +5,7 @@ import { OrchestratorProvider } from "@/providers/orchestrator-context";
 import { CloudAuthProvider } from "@/providers/cloud-auth-context";
 import { SupabaseBootstrap } from "@/providers/supabase-bootstrap";
 import { BrowserShellHint } from "@/components/common/BrowserShellHint";
-import { AppLayout } from "@/components/common/AppLayout";
-import { isWebMode } from "@/lib/mode";
+import { LayoutShell } from "@/components/common/LayoutShell";
 
 export const metadata: Metadata = {
   title: "Mayra",
@@ -26,7 +25,7 @@ export default function RootLayout({
             <OrchestratorProvider>
               <SupabaseBootstrap />
               <BrowserShellHint />
-              {isWebMode() ? <>{children}</> : <AppLayout>{children}</AppLayout>}
+              <LayoutShell>{children}</LayoutShell>
             </OrchestratorProvider>
           </CloudAuthProvider>
         </Suspense>
