@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "next build",
   "outputDirectory": "out",
-  "framework": "nextjs",
+  "framework": null,
   "installCommand": "npm install",
   "env": {
     "NEXT_PUBLIC_MAYRA_MODE": "web",
