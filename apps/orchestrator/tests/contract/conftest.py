@@ -5,6 +5,7 @@ import asyncio
 import io
 from collections.abc import AsyncIterator
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -32,6 +33,15 @@ def app(app_settings: AppSettings):
     application.state.browser = FakeBrowser()
     application.state.model_client = FakeModelClient(scripted_replies=[_DEFAULT_CONTRACT_REPLY])
     application.state.session_browser = FakeSessionBrowser()
+    # Patch _get_active_tabs so contract tests don't make real HTTP requests
+    # to CDP ports (which may be firewalled or point to real Chrome).
+    async def _fake_get_active_tabs(port):
+        return []
+    # Store the patcher so it can be cleaned up in the client fixture
+    application.state._get_active_tabs_patcher = patch(
+        "mayra_orchestrator.agent_loop._get_active_tabs", _fake_get_active_tabs
+    )
+    application.state._get_active_tabs_patcher.start()
     return application
 
 
@@ -41,6 +51,7 @@ class FakeSessionBrowser:
     def __init__(self) -> None:
         self.opened: list[tuple[int, str]] = []
         self._ports: dict[str, int] = {}
+        self._session_ports: dict[str, int] = {}  # agent_loop accesses this directly
         self.executions: list[tuple[str, Any, list[str]]] = []
 
     async def run_doctor(self) -> dict[str, Any]:
@@ -49,6 +60,7 @@ class FakeSessionBrowser:
     async def open(self, cdp_port: int, session_id: str) -> None:
         self.opened.append((cdp_port, session_id))
         self._ports[session_id] = cdp_port
+        self._session_ports[session_id] = cdp_port
 
     async def snapshot(self, session_id: str, allowed_domains: list[str] | None = None) -> dict[str, Any]:
         _ = session_id
@@ -78,9 +90,11 @@ class FakeSessionBrowser:
 
     def forget_session(self, session_id: str) -> None:
         self._ports.pop(session_id, None)
+        self._session_ports.pop(session_id, None)
 
     async def close_all(self) -> None:
         self._ports.clear()
+        self._session_ports.clear()
         self.opened.clear()
         self.executions.clear()
 
@@ -94,6 +108,10 @@ async def client(app) -> AsyncIterator[AsyncClient]:
         headers={"Host": "127.0.0.1:8000"},
     ) as ac:
         yield ac
+    # Clean up the _get_active_tabs patcher
+    patcher = getattr(app.state, "_get_active_tabs_patcher", None)
+    if patcher:
+        patcher.stop()
 
 
 def auth_headers(token: str, *, owner_id: str | None = None) -> dict[str, str]:
@@ -154,6 +172,7 @@ class FakeBrowser:
             {"ref": "@e1", "role": "button", "name": "Ok"},
         ]
         self.executions: list[tuple[str, Any, list[str]]] = []
+        self._session_ports: dict[str, int] = {}  # agent_loop accesses this directly
 
     async def doctor(self) -> None:
         return None

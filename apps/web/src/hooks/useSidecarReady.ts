@@ -3,17 +3,23 @@
 import { useEffect, useState } from "react";
 import type { SidecarHandshake } from "@/lib/tauri";
 import { getTauriBridge } from "@/lib/tauri";
+import { isWebMode } from "@/lib/mode";
 
 const READY = "orchestrator-ready";
 
 /**
  * Listens for Tauri `orchestrator-ready` (via `@tauri-apps/api/event`) or synthetic `CustomEvent`
  * in browser tests / non-Tauri dev.
+ *
+ * In web mode, always returns null — there is no local sidecar.
  */
 export function useSidecarReady(): SidecarHandshake | null {
   const [handshake, setHandshake] = useState<SidecarHandshake | null>(null);
 
   useEffect(() => {
+    // In web mode, there is no sidecar — short-circuit
+    if (isWebMode()) return;
+
     let cancelled = false;
     let detach: (() => void) | undefined;
 
