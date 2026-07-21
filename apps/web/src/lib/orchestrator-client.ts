@@ -20,12 +20,14 @@ export type SessionSummary = {
 export type SessionSnapshotResult = {
   node_count: number;
   screenshot_path: string;
+  screenshot_url?: string | null;
 };
 
 export type ConnectAndVerifyResult = {
   session_id: string;
   node_count: number;
   screenshot_path: string;
+  screenshot_url?: string | null;
 };
 
 export type HealthzBody = {
@@ -35,7 +37,7 @@ export type HealthzBody = {
 };
 
 export type ValidateSettingsInput = {
-  provider: "cloudflare" | "gemini" | "groq";
+  provider: "gemini" | "openrouter";
   model: string;
 };
 
@@ -45,17 +47,19 @@ export type ValidateSettingsResult = {
 };
 
 /**
- * Thin fetch wrapper for the local orchestrator (see MAYRA_TECHNICAL_SPEC §3.4).
- * No secrets in NEXT_PUBLIC_* — port + token come from Tauri at runtime.
+ * Thin fetch wrapper for the orchestrator (see MAYRA_TECHNICAL_SPEC §3.4).
+ * baseUrl is the full origin (e.g. "http://127.0.0.1:8765" for local mode,
+ * "https://mayra-xxx.modal.run" for cloud mode). In local mode, the URL
+ * and token come from the Tauri sidecar handshake at runtime.
  */
 export class OrchestratorClient {
   constructor(
-    private readonly port: number,
+    private readonly baseUrl: string,
     private readonly token: string,
   ) {}
 
   private base(): string {
-    return `http://127.0.0.1:${this.port}`;
+    return this.baseUrl;
   }
 
   /** Create an AbortSignal that fires after `ms` milliseconds. */
@@ -117,14 +121,19 @@ export class OrchestratorClient {
     return body;
   }
 
-  async connectSession(cdpPort: number): Promise<{ session_id: string }> {
-    console.log(`[orchestrator-client] connectSession: port=${cdpPort}`);
+  /**
+   * Connect to a browser session.
+   * @param cdpPort - CDP port of an existing Chrome (local mode). Omit/null for cloud mode
+   *   (the orchestrator launches managed Chromium and picks the port).
+   */
+  async connectSession(cdpPort?: number): Promise<{ session_id: string }> {
+    console.log(`[orchestrator-client] connectSession: port=${cdpPort ?? "auto"}`);
     const start = performance.now();
     const r = await fetch(`${this.base()}/v1/sessions/connect`, {
       method: "POST",
       headers: this.headers(),
-      body: JSON.stringify({ port: cdpPort }),
-      signal: this.timeoutSignal(10_000),
+      body: JSON.stringify({ port: cdpPort ?? null }),
+      signal: this.timeoutSignal(30_000),
     });
     const elapsed = Math.round(performance.now() - start);
     if (!r.ok) {
@@ -144,7 +153,12 @@ export class OrchestratorClient {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify({ port: cdpPort }),
-      signal: this.timeoutSignal(15_000),
+      // 30s budget: pages with heavy ad scripts (Meta Pixel, GPT, CSRF loops)
+      // can take 10+ seconds just to drain buffered console events after
+      // WebSocket connect. The backend's fire-and-forget Runtime.enable +
+      // event flood draining keeps the actual work under 5s, but we leave
+      // headroom for slow machines and slow networks.
+      signal: this.timeoutSignal(30_000),
     });
     const elapsed = Math.round(performance.now() - start);
     if (!r.ok) {
@@ -242,6 +256,32 @@ export class OrchestratorClient {
     return body;
   }
 
+  async annotatedScreenshot(sessionId: string): Promise<SessionSnapshotResult> {
+    console.log(`[orchestrator-client] annotatedScreenshot: session=${sessionId.slice(0, 8)} starting`);
+    const start = performance.now();
+    const r = await fetch(`${this.base()}/v1/sessions/${sessionId}/annotated-screenshot`, {
+      method: "POST",
+      headers: this.headers(),
+      signal: this.timeoutSignal(120_000),
+    });
+    const elapsed = Math.round(performance.now() - start);
+    if (!r.ok) {
+      const t = await this.errorBody(await r.text());
+      console.error(
+        `[orchestrator-client] annotatedScreenshot: failed session=${sessionId.slice(0, 8)} ` +
+        `status=${r.status} elapsed=${elapsed}ms`,
+        t,
+      );
+      throw new Error(`annotatedScreenshot failed: ${r.status} ${t}`);
+    }
+    const body = (await r.json()) as SessionSnapshotResult;
+    console.log(
+      `[orchestrator-client] annotatedScreenshot: ok session=${sessionId.slice(0, 8)} ` +
+      `nodes=${body.node_count} elapsed=${elapsed}ms`,
+    );
+    return body;
+  }
+
   async interactSession(
     sessionId: string,
     input: { action: string; x?: number; y?: number; text?: string },
@@ -273,6 +313,19 @@ export class OrchestratorClient {
     return (await r.json()) as ValidateSettingsResult;
   }
 
+  /** List models available from a configured provider. */
+  async listModels(provider: string): Promise<{ id: string; owned_by: string }[]> {
+    const r = await fetch(`${this.base()}/v1/models/${provider}`, {
+      headers: this.headers(),
+      signal: this.timeoutSignal(15_000),
+    });
+    if (!r.ok) {
+      const t = await this.errorBody(await r.text());
+      throw new Error(`listModels failed: ${r.status} ${t}`);
+    }
+    return (await r.json()) as { id: string; owned_by: string }[];
+  }
+
   async abort(taskId: string): Promise<void> {
     const r = await fetch(`${this.base()}/v1/tasks/${taskId}/abort`, {
       method: "POST",
@@ -284,7 +337,7 @@ export class OrchestratorClient {
     }
   }
 
-  /** Extend a task that ended with `budget_exhausted` (same goal + browser history). */
+  /** Extend a task that ended (success/budget_exhausted/failed/aborted) with more steps. */
   async continueTask(
     taskId: string,
     input: { additional_steps?: number } = {},

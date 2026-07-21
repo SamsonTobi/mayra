@@ -7,7 +7,7 @@ from typing import Annotated, Literal, Union
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
-ActionKind = Literal["click", "type", "scroll", "wait", "navigate"]
+ActionKind = Literal["click", "type", "scroll", "wait", "navigate", "done"]
 Risk = Literal["low", "medium", "high"]
 
 _TARGET_REF_RES = (
@@ -45,6 +45,10 @@ class Action(BaseModel):
             if self.target_ref is None:
                 msg = "click requires target_ref"
                 raise ValueError(msg)
+        elif self.action == "done":
+            if self.target_ref is not None or self.value is not None:
+                msg = "done must have null target_ref and value"
+                raise ValueError(msg)
         return self
 
 
@@ -68,6 +72,7 @@ class AssistantMessage(BaseModel):
     provider: str | None = Field(default=None, min_length=1, max_length=64)
     model: str | None = Field(default=None, min_length=1, max_length=120)
     observation_screenshot_path: str | None = Field(default=None, min_length=1)
+    thoughts: str | None = Field(default=None, max_length=128000)
 
 
 class SystemStatusMessage(BaseModel):
@@ -88,6 +93,7 @@ class ActionLogMessage(BaseModel):
     action: Action
     executed: bool
     screenshot_path: str | None = None
+    screenshot_url: str | None = None
     step: int = Field(ge=0)
     ts: str
 
@@ -99,6 +105,7 @@ class ApprovalRequestMessage(BaseModel):
     kind: Literal["approval_request"]
     action: Action
     screenshot_path: str = Field(min_length=1)
+    screenshot_url: str | None = None
     expires_at: str
     ts: str
 

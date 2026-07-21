@@ -20,6 +20,8 @@ from mayra_orchestrator.settings import AppSettings
 
 
 class _StubBrowser:
+    _session_ports: dict[str, int] = {}  # agent_loop accesses this directly
+
     async def snapshot(self, task_id: str) -> dict:
         _ = task_id
         return {"nodes": [{"ref": "@e1", "role": "button", "name": "Ok"}]}
@@ -30,6 +32,14 @@ class _StubBrowser:
 
     async def execute(self, task_id: str, action: object, cmds: list[str]) -> None:
         _ = (task_id, action, cmds)
+
+    async def install_overlay(self, task_id: str) -> None:
+        _ = task_id
+        return None
+
+    async def update_overlay(self, task_id: str, phase: str, label: str, detail: str = "") -> None:
+        _ = (task_id, phase, label, detail)
+        return None
 
     async def close_all(self) -> None:
         return None
@@ -122,33 +132,73 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         from mayra_orchestrator.providers.fallback import FallbackModelClient
         # Order them based on some arbitrary preference if multiple exist, e.g. Gemini -> Groq -> Cloudflare
         ordered = []
-        for p in ["gemini", "groq", "cloudflare"]:
+        for p in ["gemini", "openrouter"]:
             if p in provider_runtime.clients:
                 ordered.append(provider_runtime.clients[p])
         for p, client in provider_runtime.clients.items():
-            if p not in ["gemini", "groq", "cloudflare"]:
+            if p not in ["gemini", "openrouter"]:
                 ordered.append(client)
                 
         app.state.model_client = FallbackModelClient(ordered)
         
     app.state.browser_sessions = SessionBucket()
-    app.state.session_browser = AgentBrowserAdapter(data_dir=settings.data_dir)
+
+    # Browser adapter: cloud mode uses CloudBrowserAdapter (managed Chromium),
+    # local mode uses the raw AgentBrowserAdapter (user's system Chrome).
+    if settings.mode == "cloud":
+        from mayra_orchestrator.browser.cloud_launcher import CloudLauncher
+        from mayra_orchestrator.browser.cloud_adapter import CloudBrowserAdapter
+        launcher = CloudLauncher(flags=settings.chromium_flags)
+        inner_adapter = AgentBrowserAdapter(data_dir=settings.data_dir)
+        app.state.session_browser = CloudBrowserAdapter(inner_adapter, launcher)
+        app.state.cloud_launcher = launcher
+    else:
+        app.state.session_browser = AgentBrowserAdapter(data_dir=settings.data_dir)
+        app.state.cloud_launcher = None
+
+    # Session store for password auth mode
+    if settings.auth_mode == "password":
+        from mayra_orchestrator.api.session_store import SessionStore
+        app.state.session_store = SessionStore()
+    else:
+        app.state.session_store = None
 
     install_exception_handlers(app)
 
-    # WebView (localhost:3000) → orchestrator (127.0.0.1:*) is cross-origin; browser preflights POST + Authorization.
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
-        allow_origins=["tauri://localhost", "https://tauri.localhost"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # CORS: when settings.cors_origins is set (cloud mode), use the explicit list.
+    # Otherwise fall back to the hardcoded localhost + Tauri origins (local mode).
+    if settings.cors_origins:
+        origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    else:
+        # WebView (localhost:3000) → orchestrator (127.0.0.1:*) is cross-origin; browser preflights POST + Authorization.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+            allow_origins=["tauri://localhost", "https://tauri.localhost"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     @app.middleware("http")
     async def _host_and_correlation(request: Request, call_next):
         correlation_id_var.set(new_correlation_id())
+        if settings.allowed_hosts:
+            if settings.allowed_hosts.strip() == "*":
+                return await call_next(request)
+            allowed = [h.strip() for h in settings.allowed_hosts.split(",") if h.strip()]
+            host = request.headers.get("host", "")
+            if host not in allowed:
+                return JSONResponse(status_code=400, content={"detail": "bad host"})
+            return await call_next(request)
+        # Default: existing localhost-only check (local mode)
         host = request.headers.get("host", "")
         if not (host.startswith("127.0.0.1:") or host.startswith("localhost:")):
             return JSONResponse(status_code=400, content={"detail": "bad host"})

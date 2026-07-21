@@ -5,7 +5,7 @@
 export type Action = {
   [k: string]: unknown;
 } & {
-  action: 'click' | 'type' | 'scroll' | 'wait' | 'navigate';
+  action: 'click' | 'type' | 'scroll' | 'wait' | 'navigate' | 'done';
   target_ref: string | null;
   value: string | null;
   risk: 'low' | 'medium' | 'high';
@@ -28,6 +28,7 @@ export interface ActionLogMessage {
   action: Action;
   executed: boolean;
   screenshot_path?: string | null;
+  screenshot_url?: string | null;
   step: number;
   ts: string;
 }
@@ -36,6 +37,7 @@ export interface ApprovalRequestMessage {
   kind: 'approval_request';
   action: Action;
   screenshot_path: string;
+  screenshot_url?: string | null;
   expires_at: string;
   ts: string;
 }
@@ -56,6 +58,7 @@ export type ChatMessage =
       provider?: string;
       model?: string;
       observation_screenshot_path?: string;
+      thoughts?: string;
     }
   | SystemStatusMessage
   | ActionLogMessage
@@ -76,6 +79,7 @@ export type SseEventPayload =
         action: Action;
         executed: boolean;
         screenshot_path?: string | null;
+        screenshot_url?: string | null;
         step: number;
         ts: string;
       };
@@ -97,6 +101,7 @@ export type SseEventPayload =
         kind: 'approval_request';
         action: Action;
         screenshot_path: string;
+        screenshot_url?: string | null;
         expires_at: string;
         ts: string;
       };

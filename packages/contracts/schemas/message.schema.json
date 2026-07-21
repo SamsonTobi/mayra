@@ -13,6 +13,7 @@
         "action": { "$ref": "./action.schema.json" },
         "executed": { "type": "boolean" },
         "screenshot_path": { "type": ["string", "null"] },
+        "screenshot_url": { "type": ["string", "null"] },
         "step": { "type": "integer", "minimum": 0 },
         "ts": { "type": "string", "format": "date-time" }
       }
@@ -26,6 +27,7 @@
         "kind": { "const": "approval_request" },
         "action": { "$ref": "./action.schema.json" },
         "screenshot_path": { "type": "string", "minLength": 1 },
+        "screenshot_url": { "type": ["string", "null"] },
         "expires_at": { "type": "string", "format": "date-time" },
         "ts": { "type": "string", "format": "date-time" }
       }
@@ -67,7 +69,8 @@
         "streaming": { "type": "boolean" },
         "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
         "model": { "type": "string", "minLength": 1, "maxLength": 120 },
-        "observation_screenshot_path": { "type": "string", "minLength": 1 }
+        "observation_screenshot_path": { "type": "string", "minLength": 1 },
+        "thoughts": { "type": "string", "maxLength": 128000 }
       }
     },
     { "$ref": "#/$defs/SystemStatusMessage" },

@@ -7,7 +7,7 @@
     "beforeDevCommand": "npm --prefix ../../apps/web run dev -- --port 3000",
     "beforeBuildCommand": "npm --prefix ../../apps/web run build",
     "devUrl": "http://localhost:3000",
-    "frontendDist": "../../apps/web/out"
+    "frontendDist": "../../web/out"
   },
   "app": {
     "windows": [
@@ -25,7 +25,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: asset: https://*.supabase.co; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* https://*.supabase.co; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'",
+      "csp": "default-src 'self'; img-src 'self' data: asset: https://*.supabase.co https://*.modal.run; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* https://*.supabase.co https://*.modal.run; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'",
       "dangerousDisableAssetCspModification": false,
       "assetProtocol": {
         "enable": true,

@@ -14,7 +14,7 @@ describe("OrchestratorClient", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const client = new OrchestratorClient(8765, "secret-token");
+    const client = new OrchestratorClient("http://127.0.0.1:8765", "secret-token");
     const out = await client.createTask({
       goal: "open portal",
       allowed_domains: ["example.com"],
@@ -36,7 +36,7 @@ describe("OrchestratorClient", () => {
   it("abort posts without body", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: async () => "" });
     vi.stubGlobal("fetch", fetchMock);
-    const client = new OrchestratorClient(8765, "t");
+    const client = new OrchestratorClient("http://127.0.0.1:8765", "t");
     await client.abort("tid-9");
     expect(fetchMock).toHaveBeenCalledWith(
       "http://127.0.0.1:8765/v1/tasks/tid-9/abort",
@@ -47,7 +47,7 @@ describe("OrchestratorClient", () => {
   it("postTaskMessage sends JSON body", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: async () => "" });
     vi.stubGlobal("fetch", fetchMock);
-    const client = new OrchestratorClient(8765, "tok");
+    const client = new OrchestratorClient("http://127.0.0.1:8765", "tok");
     await client.postTaskMessage("tid-1", "steer left");
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({ text: "steer left" });

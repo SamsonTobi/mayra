@@ -28,6 +28,7 @@ export interface ActionLogMessage {
   action: Action;
   executed: boolean;
   screenshot_path?: string | null;
+  screenshot_url?: string | null;
   step: number;
   ts: string;
 }
@@ -36,6 +37,7 @@ export interface ApprovalRequestMessage {
   kind: 'approval_request';
   action: Action;
   screenshot_path: string;
+  screenshot_url?: string | null;
   expires_at: string;
   ts: string;
 }
