@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -159,7 +160,12 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     # Session store for password auth mode
     if settings.auth_mode == "password":
         from mayra_orchestrator.api.session_store import SessionStore
-        app.state.session_store = SessionStore()
+        # In cloud mode, persist sessions to the data dir (Modal Volume)
+        # so they survive container restarts (scale-to-zero).
+        persist_path = None
+        if settings.mode == "cloud":
+            persist_path = Path(settings.data_dir) / "sessions.json"
+        app.state.session_store = SessionStore(persist_path=persist_path)
     else:
         app.state.session_store = None
 

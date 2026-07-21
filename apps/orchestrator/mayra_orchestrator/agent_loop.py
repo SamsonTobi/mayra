@@ -301,10 +301,14 @@ async def _run_agent_loop_body(
         await _drain_user_messages(rec, history)
         step_no = step_cap - budget.remaining
 
-        # Detect conversational / non-action messages (e.g. "hold on", "wait a sec").
+        # Detect conversational / non-action messages (e.g. "hold on", "wait a sec",
+        # "hi", "thanks", or messages with no action intent when on about:blank).
         # Skip the expensive browser gather — the model replies with text only.
         _latest_user = _latest_user_message(history)
-        if _latest_user and _is_conversational_message(_latest_user):
+        if _latest_user and (
+            _is_conversational_message(_latest_user)
+            or not _has_action_intent(_latest_user)
+        ):
             log.info("[agent_loop] step=%d conversational msg, skipping browser gather", step_no)
             bundle = build_prompt(
                 goal=rec.goal,
@@ -577,6 +581,15 @@ async def _run_agent_loop_body(
         rec._chat_repeats = _chat_repeats  # type: ignore[attr-defined]
         if _chat_repeats >= 2:
             rec._chat_repeats = 0  # type: ignore[attr-defined]
+            if _chat_repeats >= 3:
+                # 3+ repeats — the model is truly stuck. Force done.
+                await _emit_status(
+                    rec,
+                    "The agent seems stuck. Stopping to avoid wasting steps.",
+                    "warn",
+                )
+                await _emit_done(rec, task_id, "degraded")
+                return
             history.append(
                 "system:You have repeated the same reasoning multiple times without acting. "
                 "Take a DIFFERENT action now — click a different element, scroll, navigate, "
@@ -1738,3 +1751,34 @@ def _is_conversational_message(text: str) -> bool:
         if p in lower:
             return True
     return False
+
+
+# Action verbs that indicate the user wants the agent to do something on the web.
+# If none of these are present AND the page is about:blank, treat as conversational.
+_ACTION_VERBS: tuple[str, ...] = (
+    "go to", "navigate", "open", "visit", "browse",
+    "click", "type", "fill", "enter", "submit",
+    "search", "find", "look for", "scroll",
+    "log in", "login", "sign in", "signin", "log me in",
+    "download", "upload", "fill out", "complete",
+    "check", "read", "get", "show me", "tell me about",
+    "buy", "purchase", "order", "register", "sign up",
+)
+
+
+def _has_action_intent(text: str) -> bool:
+    """Check if a user message contains action-oriented intent.
+
+    Returns True if the message contains a URL or an action verb,
+    indicating the user wants the agent to do something on the web.
+    """
+    lower = text.lower().strip()
+    # Contains a URL?
+    if "http://" in lower or "https://" in lower or "www." in lower:
+        return True
+    # Contains a .tld pattern (e.g. "go to google.com")?
+    import re
+    if re.search(r'\b\w+\.\w{2,}\b', lower):
+        return True
+    # Contains an action verb?
+    return any(verb in lower for verb in _ACTION_VERBS)
