@@ -95,16 +95,28 @@ async def list_sessions(
 @router.post("/connect", response_model=SessionConnectResponse)
 async def connect_session(
     body: SessionConnectRequest,
+    request: Request,
     browser: Annotated[AgentBrowserAdapter, Depends(get_session_browser)],
     bucket: Annotated[SessionBucket, Depends(get_session_bucket)],
 ) -> SessionConnectResponse:
     sid = str(uuid.uuid4())
-    log.info("[sessions] connect_session: port=%d new_sid=%s", body.port, sid[:8])
+    settings = request.app.state.settings
+    # In cloud mode, launch Chromium if no port was supplied.
+    # In local mode, the caller must supply a port (existing behavior).
+    cdp_port = body.port
+    if cdp_port is None:
+        if settings.mode != "cloud":
+            raise HTTPException(status_code=422, detail="port is required in local mode")
+        launcher = getattr(request.app.state, "cloud_launcher", None)
+        if launcher is None:
+            raise HTTPException(status_code=503, detail="cloud launcher not configured")
+        cdp_port = await launcher.launch()
+    log.info("[sessions] connect_session: port=%d new_sid=%s", cdp_port, sid[:8])
     t0 = time.monotonic()
-    await browser.open(body.port, sid)
+    await browser.open(cdp_port, sid)
     elapsed = time.monotonic() - t0
     log.info("[sessions] connect_session: open ok for %s (%.2fs)", sid[:8], elapsed)
-    bucket.by_id[sid] = LiveBrowserSession(session_id=sid, cdp_port=body.port)
+    bucket.by_id[sid] = LiveBrowserSession(session_id=sid, cdp_port=cdp_port)
     return SessionConnectResponse(session_id=sid)
 
 
@@ -165,7 +177,8 @@ async def connect_and_verify_session(
     return ConnectAndVerifyResponse(
         session_id=sid,
         node_count=node_count,
-        screenshot_path=str(shot_path.resolve()),
+        screenshot_path=str(shot_path),
+        screenshot_url=settings.screenshot_url_for(shot_path),
     )
 
 
@@ -222,7 +235,8 @@ async def verify_session(
 
     return SessionSnapshotResponse(
         node_count=node_count,
-        screenshot_path=str(shot_path.resolve()),
+        screenshot_path=str(shot_path),
+        screenshot_url=settings.screenshot_url_for(shot_path),
     )
 
 
@@ -349,7 +363,8 @@ async def snapshot_session(
 
     return SessionSnapshotResponse(
         node_count=n,
-        screenshot_path=str(shot_path.resolve()),
+        screenshot_path=str(shot_path),
+        screenshot_url=settings.screenshot_url_for(shot_path),
     )
 
 
@@ -424,9 +439,110 @@ async def interact_session(
         
         return {
             "success": True,
-            "screenshot_path": str(shot_path.resolve())
+            "screenshot_path": str(shot_path),
+            "screenshot_url": settings.screenshot_url_for(shot_path),
         }
     except Exception as e:
         log.error("[sessions] interact failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{session_id}/annotated-screenshot", response_model=SessionSnapshotResponse)
+async def annotated_screenshot(
+    session_id: str,
+    request: Request,
+    browser: Annotated[AgentBrowserAdapter, Depends(get_session_browser)],
+    bucket: Annotated[SessionBucket, Depends(get_session_bucket)],
+) -> SessionSnapshotResponse:
+    """Capture a SOM (Set-of-Marks) annotated screenshot using agent-browser.
+
+    Runs `agent-browser screenshot --annotate` which draws numbered
+    overlays on top of interactive elements.  The @e1/@e2 labels match
+    the accessibility snapshot refs — useful for visual-grounded debugging.
+    """
+    rec = bucket.by_id.get(session_id)
+    if rec is None:
+        log.warning("[sessions] annotated_screenshot: session %s not found in bucket", session_id[:8])
+        raise HTTPException(status_code=404, detail="session not found")
+
+    t0 = time.monotonic()
+    log.info(
+        "[sessions] annotated_screenshot: session=%s cdp_port=%d — fast CDP liveness check first",
+        session_id[:8],
+        rec.cdp_port,
+    )
+
+    # Fast-fail CDP probe before running the expensive agent-browser subprocess.
+    try:
+        await _probe_cdp_endpoint(rec.cdp_port)
+        log.info("[sessions] annotated_screenshot: CDP liveness OK on port %d (%.2fs)", rec.cdp_port, time.monotonic() - t0)
+    except BrowserError as exc:
+        elapsed = time.monotonic() - t0
+        log.warning(
+            "[sessions] annotated_screenshot: CDP liveness FAILED for %s on port %d (%.2fs): %s",
+            session_id[:8],
+            rec.cdp_port,
+            elapsed,
+            exc,
+        )
+        _drop_session(bucket, browser, session_id)
+        return JSONResponse(
+            status_code=410,
+            content={
+                "code": "session_disconnected",
+                "message": "Browser session disconnected; reconnect required.",
+                "detail": str(exc),
+            },
+        )
+
+    # Run snapshot + annotated screenshot in parallel.
+    # The snapshot gives us node_count; the annotated screenshot is the SOM overlay.
+    try:
+        log.info("[sessions] annotated_screenshot: running snapshot + annotated screenshot for %s", session_id[:8])
+        snap, (annotated_png, _mime) = await asyncio.gather(
+            browser.snapshot(session_id),
+            browser.screenshot_annotated(session_id),
+        )
+        log.info("[sessions] annotated_screenshot: OK for %s (%.2fs)", session_id[:8], time.monotonic() - t0)
+    except BrowserError as exc:
+        elapsed = time.monotonic() - t0
+        log.error(
+            "[sessions] annotated_screenshot: FAILED for %s (%.2fs): %s",
+            session_id[:8],
+            elapsed,
+            exc,
+        )
+        return JSONResponse(
+            status_code=502,
+            content={
+                "code": "annotated_screenshot_failed",
+                "message": "Failed to capture annotated screenshot.",
+                "detail": str(exc),
+            },
+        )
+
+    n = snapshot_node_count(snap)
+    rec.step += 1
+    rec.last_snapshot = snap
+    rec.last_node_count = n
+
+    settings = request.app.state.settings
+    shot_dir = Path(settings.data_dir) / "screenshots" / session_id
+    shot_path = shot_dir / f"{rec.step}-annotated.webp"
+    save_png_as_preview_webp(annotated_png, shot_path)
+
+    elapsed = time.monotonic() - t0
+    log.info(
+        "[sessions] annotated_screenshot: DONE session=%s nodes=%d path=%s (%.2fs)",
+        session_id[:8],
+        n,
+        shot_path,
+        elapsed,
+    )
+
+    return SessionSnapshotResponse(
+        node_count=n,
+        screenshot_path=str(shot_path),
+        screenshot_url=settings.screenshot_url_for(shot_path),
+    )
 
