@@ -3,6 +3,7 @@
   "buildCommand": "next build",
   "outputDirectory": "out",
   "framework": "nextjs",
+  "installCommand": "npm install",
   "env": {
     "NEXT_PUBLIC_MAYRA_MODE": "web",
     "NEXT_PUBLIC_CLOUD_ORCHESTRATOR_URL": "https://samsonadebowale890--mayra-orchestrator-mayra-web.modal.run"
