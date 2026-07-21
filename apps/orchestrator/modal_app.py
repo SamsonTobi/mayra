@@ -115,10 +115,12 @@ app = modal.App("mayra-orchestrator")
         modal.Secret.from_name("mayra-providers"),
         modal.Secret.from_name("mayra-config"),
     ],
-    # Scale to zero when idle — no min_containers to avoid 24/7 billing.
-    # Cold start adds ~5-15s on first request after idle, but costs $0 when unused.
-    # scaledown_window=300 keeps the container warm for 5 minutes after the last
-    # request (cheap, avoids repeated cold starts during active use).
+    # Single container — the in-memory task registry is per-process, so
+    # all requests (task creation + SSE stream) must hit the same container.
+    # max_containers=1 ensures Modal never spins up a second container.
+    # @modal.concurrent(max_inputs=4) allows 4 simultaneous requests on
+    # that one container (multiple SSE streams + API calls).
+    max_containers=1,             # only one container — no multi-container routing
     scaledown_window=300,         # 5 minutes idle → scale to zero
     memory=4096,                  # 4GB for Chromium + Python orchestrator
     cpu=2,

@@ -133,6 +133,18 @@ async def continue_task(
 ) -> dict[str, bool]:
     reg = request.app.state.registry
     try:
+        rec = reg.ensure_task_owned(task_id, owner_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="task not found") from None
+
+    # If the agent is still running, don't try to continue — just return ok.
+    # The user's message was already sent via postTaskMessage (steering).
+    # This handles the race condition where the SSE done event arrives
+    # client-side but the server-side task hasn't fully cleaned up yet.
+    if rec.agent_runner is not None and not rec.agent_runner.done():
+        return {"ok": True}
+
+    try:
         rec = reg.prepare_continue(
             task_id,
             acting_owner_id=owner_id,
@@ -143,14 +155,33 @@ async def continue_task(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    if rec.agent_runner is not None and not rec.agent_runner.done():
-        raise HTTPException(status_code=409, detail="task already running")
-
     rec.agent_runner = asyncio.create_task(
         run_agent_loop(request.app, task_id, get_correlation_id()),
         name=f"mayra-task-{task_id}",
     )
     return {"ok": True}
+
+
+@router.get("/{task_id}")
+async def get_task(
+    request: Request,
+    task_id: str,
+    owner_id: Annotated[str, Depends(get_effective_owner_id)],
+) -> dict:
+    reg = request.app.state.registry
+    try:
+        rec = reg.ensure_task_owned(task_id, owner_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="task not found") from None
+    return {
+        "task_id": task_id,
+        "status": rec.status,
+        "goal": rec.goal,
+        "steps_remaining": rec.steps_remaining,
+        "last_error_code": rec.last_error_code,
+        "last_error_message": rec.last_error_message,
+        "session_id": rec.session_id,
+    }
 
 
 @router.post("/{task_id}/message")
