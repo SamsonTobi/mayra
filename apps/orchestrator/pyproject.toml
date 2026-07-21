@@ -24,6 +24,10 @@ dev = [
   "pytest-cov>=5",
   "respx>=0.22",
   "uvicorn[standard]>=0.32",
+  "psutil>=5.9",
+]
+modal = [
+  "modal>=0.64",
 ]
 
 [tool.pytest.ini_options]
@@ -34,6 +38,10 @@ markers = [
   "unit: fast in-process tests with no I/O",
   "contract: in-process FastAPI tests with fakes",
   "integration: real subprocesses, network or filesystem (nightly)",
+  "resilience: in-process fault injection and invariant tests against the real agent loop",
+  "fault: fault-injection tests (browser/model failures injected mid-run)",
+  "soak: long-horizon runs, 10+ minutes each (weekly)",
+  "e2e_real_model: real Chrome + real model API against real websites (costs tokens, manual)",
 ]
 
 [build-system]
