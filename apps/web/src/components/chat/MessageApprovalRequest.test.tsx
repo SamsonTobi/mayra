@@ -27,7 +27,7 @@ describe("MessageApprovalRequest", () => {
     };
     const user = userEvent.setup();
     render(
-      <MessageApprovalRequest message={message} port={8000} token="tok" />,
+      <MessageApprovalRequest message={message} baseUrl="http://127.0.0.1:8000" token="tok" />,
     );
     await user.click(screen.getByRole("button", { name: /approve/i }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());

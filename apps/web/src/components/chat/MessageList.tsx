@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ChatMessage } from "@mayra/contracts";
 import { MessageActionLog } from "./MessageActionLog";
 import { MessageApprovalRequest } from "./MessageApprovalRequest";
@@ -11,12 +11,16 @@ import { ChatObservationThumbnail } from "./ChatObservationThumbnail";
 
 type Props = {
   messages: ChatMessage[];
-  port: number | null;
+  baseUrl: string | null;
   token: string | null;
   onRetry?: () => void;
+  // When true, the task has finished (done/failed/aborted) and the last step
+  // should be rendered as completed rather than "Executing next action...".
+  isDone?: boolean;
 };
 
 interface StepGroup {
+  id: string;
   stepNumber: number;
   statusMessages: Extract<ChatMessage, { kind: "system_status" }>[];
   assistantMessage: Extract<ChatMessage, { kind: "assistant" }> | null;
@@ -186,20 +190,19 @@ function LoadingIcon() {
   );
 }
 
-export function MessageList({ messages, port, token, onRetry }: Props) {
-  const [completedOpen, setCompletedOpen] = useState(false);
-  const [openThoughts, setOpenThoughts] = useState<Record<number, boolean>>({});
+export function MessageList({ messages, baseUrl, token, onRetry, isDone }: Props) {
+  const [openThoughts, setOpenThoughts] = useState<Record<string, boolean>>({});
 
   // 1. Group flat messages into turns separated by follow-up user messages
   const preRunMessages: ChatMessage[] = [];
   const turns: { followUpUser: ChatMessage | null; steps: StepGroup[] }[] = [];
   const postRunMessages: ChatMessage[] = [];
-  let followUpUserMessages: ChatMessage[] = [];
 
   let currentSteps: StepGroup[] = [];
   let currentGroup: StepGroup | null = null;
   let sawAgentContent = false;
   let pendingFollowUp: ChatMessage | null = null;
+  let nextGroupId = 0;
 
   for (const m of messages) {
     if (m.kind === "user") {
@@ -214,18 +217,11 @@ export function MessageList({ messages, port, token, onRetry }: Props) {
           currentGroup = null;
         }
         pendingFollowUp = m;
-        followUpUserMessages.push(m);
       }
       continue;
     }
 
     sawAgentContent = true;
-    // Any buffered follow-up messages that now have agent content after them
-    // belong to the PREVIOUS turn, not the current one.
-    if (followUpUserMessages.length > 0) {
-      postRunMessages.push(...followUpUserMessages);
-      followUpUserMessages.length = 0;
-    }
 
     let stepNum: number | null = null;
     if (m.kind === "system_status") {
@@ -244,6 +240,7 @@ export function MessageList({ messages, port, token, onRetry }: Props) {
         );
         if (!group) {
           group = {
+            id: String(nextGroupId++),
             stepNumber: stepNum,
             statusMessages: [],
             assistantMessage: null,
@@ -287,13 +284,14 @@ export function MessageList({ messages, port, token, onRetry }: Props) {
     }
   }
 
-  // Flush the final turn
-  if (currentSteps.length > 0) {
+  // Flush the final turn (include pending follow-up even if no steps yet,
+  // otherwise the follow-up message vanishes from the UI when the stream
+  // ends before the agent produces new steps).
+  if (currentSteps.length > 0 || pendingFollowUp) {
     turns.push({ followUpUser: pendingFollowUp, steps: currentSteps });
   }
 
-  // Flatten all completed steps from past turns into one array (for the accordion)
-  // and extract the active step from the last turn
+  // Flatten all completed steps from past turns and extract the active step from the last turn
   const allTurnsExceptLast = turns.slice(0, -1);
   const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
 
@@ -311,14 +309,6 @@ export function MessageList({ messages, port, token, onRetry }: Props) {
 
   // Determine the follow-up user message for the current turn
   const currentFollowUpUser = lastTurn?.followUpUser ?? null;
-
-  // Auto-close completed accordion when a new turn starts
-  const hasNewTurn = allTurnsExceptLast.length > 0;
-  useEffect(() => {
-    if (hasNewTurn) {
-      setCompletedOpen(false);
-    }
-  }, [hasNewTurn]);
 
   // 3. Helper to calculate thinking duration
   const getThinkingDuration = (step: StepGroup) => {
@@ -379,16 +369,21 @@ export function MessageList({ messages, port, token, onRetry }: Props) {
     const action = step.actionMessage?.action;
     const isActionDone = step.actionMessage !== null;
 
+    // For completed (non-active) steps that never received an assistant message
+    // (e.g. the stream ended mid-step), cap the screenshot state so we don't
+    // show a stuck "Capturing page screenshot..." spinner forever.
+    const screenshotCap = isScreenshotDone || (!isActive && isScreenshotting);
+
     return (
-      <div className="step-item" key={step.stepNumber}>
+      <div className="step-item" key={step.id}>
         {/* Screenshot capturing row */}
         {isScreenshotting || isScreenshotDone ? (
-          <div className={`step-row ${!isScreenshotDone ? "loading" : ""}`}>
+          <div className={`step-row ${!screenshotCap && isActive ? "loading" : ""}`}>
             <span className="step-row-icon">
-              {isScreenshotDone ? <CameraIcon /> : <LoadingIcon />}
+              {screenshotCap ? <CameraIcon /> : <LoadingIcon />}
             </span>
             <span className="step-row-text">
-              {isScreenshotDone
+              {screenshotCap
                 ? "Captured page screenshot"
                 : "Capturing page screenshot..."}
             </span>
@@ -413,12 +408,12 @@ export function MessageList({ messages, port, token, onRetry }: Props) {
               ) : (
                 <details
                   className="step-thought-details"
-                  open={openThoughts[step.stepNumber] ?? true}
+                  open={openThoughts[step.id] ?? true}
                   onToggle={(e) => {
                     const isOpen = (e.target as HTMLDetailsElement).open;
                     setOpenThoughts((prev) => ({
                       ...prev,
-                      [step.stepNumber]: isOpen,
+                      [step.id]: isOpen,
                     }));
                   }}
                 >
@@ -433,6 +428,11 @@ export function MessageList({ messages, port, token, onRetry }: Props) {
               )}
             </div>
           </div>
+        ) : null}
+
+        {/* Assistant Message Bubble */}
+        {assistant && (assistant.markdown || assistant.streaming) ? (
+          <MessageAssistant message={assistant} />
         ) : null}
 
         {/* Action log row */}
@@ -467,10 +467,12 @@ export function MessageList({ messages, port, token, onRetry }: Props) {
                   </span>
                   <ChevronRightIcon className="details-chevron" />
                   {step.actionMessage?.screenshot_path ? (
-                    <ChatObservationThumbnail
-                      screenshotPath={step.actionMessage.screenshot_path}
-                      variant="compact"
-                    />
+                    <span className="step-action-thumb-spacer">
+                      <ChatObservationThumbnail
+                        screenshotPath={step.actionMessage.screenshot_path}
+                        variant="compact"
+                      />
+                    </span>
                   ) : null}
                 </summary>
                 <div className="step-action-expanded">
@@ -507,7 +509,7 @@ export function MessageList({ messages, port, token, onRetry }: Props) {
             </div>
           </div>
         ) : /* Waiting / executing active states */
-        isActive && isScreenshotDone && !isThinking ? (
+        isActive && isScreenshotDone && !isThinking && !isActionDone ? (
           <div className="step-row loading">
             <span className="step-row-icon">
               <LoadingIcon />
@@ -535,75 +537,11 @@ export function MessageList({ messages, port, token, onRetry }: Props) {
         return null;
       })}
 
-      {/* 2. Past turns' steps (collapsed accordion) */}
-      {pastSteps.length > 0
-        ? (() => {
-            const totalSeconds = pastSteps.reduce((acc, step) => {
-              return acc + getThinkingDurationSec(step);
-            }, 0);
-            return (
-              <details
-                className="completed-steps-accordion"
-                open={completedOpen}
-                onToggle={(e) =>
-                  setCompletedOpen((e.target as HTMLDetailsElement).open)
-                }
-              >
-                <summary
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.4rem",
-                  }}
-                >
-                  <ChevronRightIcon className="accordion-chevron" />
-                  <span>Previous work: {totalSeconds}s</span>
-                </summary>
-                <div
-                  className="completed-steps-list"
-                  style={{ paddingLeft: "1rem" }}
-                >
-                  {pastSteps.map((step) => renderStepItem(step, false))}
-                </div>
-              </details>
-            );
-          })()
-        : null}
+      {/* 2. Past turns' steps */}
+      {pastSteps.map((step) => renderStepItem(step, false))}
 
       {/* 3. Current turn's completed steps */}
-      {completedSteps.length > 0
-        ? (() => {
-            const totalSeconds = completedSteps.reduce((acc, step) => {
-              return acc + getThinkingDurationSec(step);
-            }, 0);
-            return (
-              <details
-                className="completed-steps-accordion"
-                open={completedOpen}
-                onToggle={(e) =>
-                  setCompletedOpen((e.target as HTMLDetailsElement).open)
-                }
-              >
-                <summary
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.4rem",
-                  }}
-                >
-                  <ChevronRightIcon className="accordion-chevron" />
-                  <span>Worked for {totalSeconds}s</span>
-                </summary>
-                <div
-                  className="completed-steps-list"
-                  style={{ paddingLeft: "1rem" }}
-                >
-                  {completedSteps.map((step) => renderStepItem(step, false))}
-                </div>
-              </details>
-            );
-          })()
-        : null}
+      {completedSteps.map((step) => renderStepItem(step, false))}
 
       {/* 4. Current follow-up user message — render BEFORE active step */}
       {currentFollowUpUser && currentFollowUpUser.kind === "user" ? (
@@ -611,29 +549,20 @@ export function MessageList({ messages, port, token, onRetry }: Props) {
       ) : null}
 
       {/* 5. Active Step Progress */}
-      {activeStep ? renderStepItem(activeStep, true) : null}
+      {activeStep ? renderStepItem(activeStep, !isDone) : null}
 
       {/* 6. Interactive Approval Request (if active) */}
       {activeStep && activeStep.approvalMessage ? (
         <div style={{ margin: "0.5rem 1rem" }}>
           <MessageApprovalRequest
             message={activeStep.approvalMessage}
-            port={port}
+            baseUrl={baseUrl}
             token={token}
           />
         </div>
       ) : null}
 
-      {/* 7. Final/Latest Assistant bubble */}
-      {activeStep &&
-      activeStep.assistantMessage &&
-      (activeStep.assistantMessage.markdown ||
-        activeStep.assistantMessage.streaming) ? (
-        <MessageAssistant
-          message={activeStep.assistantMessage}
-          showThoughts={false}
-        />
-      ) : null}
+
 
       {/* 8. Post-run messages (done, failure, etc.) */}
       {postRunMessages.map((m) => {

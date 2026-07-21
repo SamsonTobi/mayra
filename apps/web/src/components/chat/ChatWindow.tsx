@@ -11,6 +11,9 @@ import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
 import { TypingIndicator } from "./TypingIndicator";
 import { Dropdown } from "../common/Dropdown";
+import { CloudLoginDialog } from "./CloudLoginDialog";
+import { LocalCloudToggle, type TaskTarget } from "./LocalCloudToggle";
+import { isWebMode, isDesktopMode, getCloudOrchestratorUrl } from "@/lib/mode";
 import type { ChatMessage } from "@mayra/contracts";
 
 function conversationHistory(
@@ -55,15 +58,34 @@ function SidebarIcon() {
 }
 
 export function ChatWindow() {
-  const { client, port, token } = useOrchestrator();
+  const {
+    client,
+    baseUrl,
+    token,
+    cloudClient,
+    cloudBaseUrl,
+    cloudToken,
+    cloudAvailable,
+  } = useOrchestrator();
   const browserSession = useAutoBrowserSession();
   const [taskId, setTaskId] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [pendingMessages, setPendingMessages] = useState<
-    { id: string; text: string; provider: string }[]
-  >([]);
   const lastProviderRef = useRef("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Per-task target: "local" (sidecar) or "cloud" (Modal orchestrator).
+  // In web mode, always "cloud". In desktop mode, user picks per task.
+  const [target, setTarget] = useState<TaskTarget>(isWebMode() ? "cloud" : "local");
+  const [showCloudLogin, setShowCloudLogin] = useState(false);
+
+  // The active client/URL/token depend on the target.
+  // In web mode, target is always "cloud" so these are the cloud values.
+  const activeClient = target === "cloud" ? cloudClient : client;
+  const activeBaseUrl = target === "cloud" ? cloudBaseUrl : baseUrl;
+  const activeToken = target === "cloud" ? cloudToken : token;
+
+  // Show the Local/Cloud toggle only in desktop mode when cloud URL is configured.
+  const showTargetToggle = isDesktopMode() && getCloudOrchestratorUrl() !== null;
 
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -79,7 +101,7 @@ export function ChatWindow() {
     appendUserMessage,
     appendSystemMessage,
     loadHistoryState,
-  } = useChatStream(port, token);
+  } = useChatStream(activeBaseUrl, activeToken);
 
   // Sync taskId and message history when URL query param changes
   useEffect(() => {
@@ -100,7 +122,7 @@ export function ChatWindow() {
             parsed.failed,
             parsed.lastDoneStatus,
           );
-          if (!parsed.done && !parsed.failed && port && token) {
+          if (!parsed.done && !parsed.failed && activeBaseUrl && activeToken) {
             start(queryTaskId);
           }
         }
@@ -111,7 +133,7 @@ export function ChatWindow() {
       setTaskId(null);
       reset();
     }
-  }, [queryTaskId, port, token, loadHistoryState, start, reset]);
+  }, [queryTaskId, activeBaseUrl, activeToken, loadHistoryState, start, reset]);
 
   // Persist message state to local storage when changed
   useEffect(() => {
@@ -157,28 +179,32 @@ export function ChatWindow() {
 
   const onSend = useCallback(
     async (text: string, provider: string) => {
-      if (!client) return;
+      if (!activeClient) return;
       const trimmed = text.trim();
       if (!trimmed) return;
       lastProviderRef.current = provider;
 
       if (taskId) {
-        // If the agent is still working, queue this message instead of sending immediately.
+        // If the agent is still running, send the message to the orchestrator
+        // immediately so it steers the agent at the next step. The orchestrator's
+        // `_drain_user_messages` picks it up from the task's message queue.
         if (!done && !failed) {
-          setPendingMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID?.() ?? `${Date.now()}`,
-              text: trimmed,
-              provider,
-            },
-          ]);
+          appendUserMessage(trimmed);
+          try {
+            await activeClient.postTaskMessage(taskId, trimmed);
+          } catch (e) {
+            appendSystemMessage(
+              e instanceof Error ? e.message : "Could not send message to agent.",
+              "error",
+            );
+          }
           return;
         }
+        // Agent has finished — resume with a continue call.
         appendUserMessage(trimmed);
         try {
-          await client.postTaskMessage(taskId, trimmed);
-          await client.continueTask(taskId, {
+          await activeClient.postTaskMessage(taskId, trimmed);
+          await activeClient.continueTask(taskId, {
             additional_steps: CONTINUE_STEPS,
           });
           start(taskId);
@@ -194,11 +220,27 @@ export function ChatWindow() {
       const initialMessages = conversationHistory(messages);
       appendUserMessage(trimmed);
       try {
-        const res = await client.createTask({
+        // For cloud tasks, create a managed Chromium session first (no local CDP port).
+        // For local tasks, use the existing browser session from useAutoBrowserSession.
+        let sessionId = browserSession.sessionId || null;
+        if (target === "cloud") {
+          try {
+            const session = await activeClient.connectSession();
+            sessionId = session.session_id;
+          } catch (e) {
+            appendSystemMessage(
+              e instanceof Error ? `Cloud browser launch failed: ${e.message}` : "Cloud browser launch failed.",
+              "error",
+            );
+            return;
+          }
+        }
+
+        const res = await activeClient.createTask({
           goal: trimmed,
           allowed_domains: [],
           initial_messages: initialMessages,
-          session_id: browserSession.sessionId || null,
+          session_id: sessionId,
           provider: provider || null,
           start_agent_loop: true,
           max_steps: CHAT_MAX_STEPS,
@@ -232,7 +274,8 @@ export function ChatWindow() {
       }
     },
     [
-      client,
+      activeClient,
+      target,
       browserSession.ready,
       browserSession.sessionId,
       taskId,
@@ -246,66 +289,21 @@ export function ChatWindow() {
     ],
   );
 
-  const flushPending = useCallback(async () => {
-    if (!client || !taskId || pendingMessages.length === 0) return;
-    const batch = [...pendingMessages];
-    setPendingMessages([]);
-    for (const pm of batch) {
-      appendUserMessage(pm.text);
-      try {
-        await client.postTaskMessage(taskId, pm.text);
-      } catch (e) {
-        appendSystemMessage(
-          e instanceof Error ? e.message : "Could not send queued message.",
-          "error",
-        );
-        return;
-      }
-    }
-    try {
-      await client.continueTask(taskId, { additional_steps: CONTINUE_STEPS });
-      start(taskId);
-    } catch (e) {
-      appendSystemMessage(
-        e instanceof Error ? e.message : "Could not continue task.",
-        "error",
-      );
-    }
-  }, [
-    client,
-    taskId,
-    pendingMessages,
-    appendUserMessage,
-    appendSystemMessage,
-    start,
-  ]);
-
-  const removePending = useCallback((id: string) => {
-    setPendingMessages((prev) => prev.filter((p) => p.id !== id));
-  }, []);
-
   const onRetry = useCallback(() => {
     if (!lastUserMessage) return;
     void onSend(lastUserMessage, lastProviderRef.current);
   }, [lastUserMessage, onSend]);
 
   const onAbort = useCallback(async () => {
-    if (!client || !taskId) return;
-    await client.abort(taskId);
-  }, [client, taskId]);
-
-  // Auto-flush pending messages when the agent finishes its current task
-  useEffect(() => {
-    if ((done || failed) && pendingMessages.length > 0) {
-      flushPending();
-    }
-  }, [done, failed, pendingMessages.length, flushPending]);
+    if (!activeClient || !taskId) return;
+    await activeClient.abort(taskId);
+  }, [activeClient, taskId]);
 
   const streamingAssistant = messages.some(
     (m) => m.kind === "assistant" && m.streaming,
   );
   const awaitingAssistant =
-    Boolean(taskId && client && !done && !failed) &&
+    Boolean(taskId && activeClient && !done && !failed) &&
     messages.some((m) => m.kind === "user") &&
     !messages.some((m) => m.kind === "assistant") &&
     !streamingAssistant;
@@ -313,6 +311,19 @@ export function ChatWindow() {
   const budgetPaused = Boolean(
     taskId && done && lastDoneStatus === "budget_exhausted",
   );
+  // Task ended due to an issue (not success or budget exhaustion).
+  // Show a banner with a Continue button so the user can send a follow-up.
+  const taskEnded = Boolean(
+    taskId &&
+      done &&
+      (failed || lastDoneStatus === "aborted" || lastDoneStatus === "degraded"),
+  );
+  const taskEndedMessage =
+    lastDoneStatus === "aborted"
+      ? "The agent was stopped."
+      : lastDoneStatus === "degraded"
+        ? "The agent finished with issues."
+        : "The agent ran into an issue.";
   const hasMessages = messages.length > 0;
   const showPreview = previewOpen && Boolean(browserSession.sessionId);
 
@@ -426,9 +437,14 @@ export function ChatWindow() {
             <div style={{ width: "100%" }}>
               <Composer
                 onSend={onSend}
-                disabled={!client}
+                disabled={!activeClient}
                 isAbortable={Boolean(taskId && !done)}
                 onAbort={onAbort}
+                target={target}
+                onTargetChange={setTarget}
+                showTargetToggle={showTargetToggle}
+                cloudAvailable={cloudAvailable}
+                onCloudLoginRequired={() => setShowCloudLogin(true)}
               />
             </div>
             {browserSession.error && (
@@ -460,10 +476,80 @@ export function ChatWindow() {
                 )}
                 <MessageList
                   messages={messages}
-                  port={port}
-                  token={token}
+                  baseUrl={activeBaseUrl}
+                  token={activeToken}
                   onRetry={lastUserMessage ? onRetry : undefined}
+                  isDone={done || failed}
                 />
+                {taskEnded && (
+                  <div
+                    style={{
+                      margin: "0.5rem 1rem",
+                      padding: "0.75rem 1rem",
+                      background: "rgba(239,68,68,0.06)",
+                      border: "1px solid rgba(239,68,68,0.2)",
+                      borderRadius: "8px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "0.75rem",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "0.85rem",
+                        color: "var(--fg)",
+                        flex: 1,
+                      }}
+                    >
+                      {taskEndedMessage}{" "}
+                      <span className="muted">
+                          Click Continue to resume, or send a follow-up message.
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!activeClient || !taskId) return;
+                          // If the user already sent a follow-up message, just
+                          // resume the task without injecting a fake "Continue"
+                          // message that would override their intent.
+                          const lastMsg = messages[messages.length - 1];
+                          if (lastMsg?.kind === "user") {
+                            void activeClient
+                              .continueTask(taskId, {
+                                additional_steps: CONTINUE_STEPS,
+                              })
+                              .then(() => start(taskId))
+                              .catch((e: unknown) => {
+                                appendSystemMessage(
+                                  e instanceof Error
+                                    ? e.message
+                                    : "Could not continue task.",
+                                  "error",
+                                );
+                              });
+                          } else {
+                            // Kickstart the task with a bare "continue" message.
+                            void onSend("Continue", lastProviderRef.current);
+                          }
+                        }}
+                        style={{
+                        padding: "0.4rem 0.9rem",
+                        fontSize: "0.8rem",
+                        fontWeight: 600,
+                        background: "var(--fg)",
+                        color: "var(--bg)",
+                        border: "none",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Continue
+                    </button>
+                  </div>
+                )}
                 {awaitingAssistant && (
                   <p className="muted" style={{ margin: "0.5rem 1rem" }}>
                     Waiting for browser snapshot + model…
@@ -482,96 +568,6 @@ export function ChatWindow() {
                 alignItems: "center",
               }}
             >
-              {/* Pending message queue — shown when agent is busy and user sends follow-ups */}
-              {pendingMessages.length > 0 && (
-                <div
-                  style={{
-                    width: "100%",
-                    maxWidth: "760px",
-                    background: "var(--shaded)",
-                    borderRadius: "10px",
-                    border: "1px solid var(--border)",
-                    overflow: "hidden",
-                  }}
-                >
-                  <div
-                    style={{
-                      padding: "0.5rem 0.9rem",
-                      fontSize: "0.7rem",
-                      fontWeight: 600,
-                      color: "var(--muted)",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.04em",
-                      borderBottom: "1px solid var(--border)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <span>
-                      {pendingMessages.length} message
-                      {pendingMessages.length > 1 ? "s" : ""} queued
-                    </span>
-                    <button
-                      type="button"
-                      onClick={flushPending}
-                      style={{
-                        padding: "0.25rem 0.6rem",
-                        fontSize: "0.7rem",
-                        fontWeight: 600,
-                        background: "var(--fg)",
-                        color: "var(--bg)",
-                        border: "none",
-                        borderRadius: "5px",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Send all
-                    </button>
-                  </div>
-                  {pendingMessages.map((pm) => (
-                    <div
-                      key={pm.id}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "0.5rem",
-                        padding: "0.5rem 0.9rem",
-                        fontSize: "0.85rem",
-                        borderBottom: "1px solid var(--border)",
-                      }}
-                    >
-                      <span
-                        style={{
-                          flex: 1,
-                          color: "var(--fg)",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {pm.text}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => removePending(pm.id)}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          color: "var(--muted)",
-                          cursor: "pointer",
-                          fontSize: "0.9rem",
-                          padding: "0 0.2rem",
-                          lineHeight: 1,
-                        }}
-                        title="Remove"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
               {browserSession.error && (
                 <div
                   className="banner"
@@ -587,13 +583,28 @@ export function ChatWindow() {
               )}
               <Composer
                 onSend={onSend}
-                disabled={!client}
+                disabled={!activeClient}
                 isAbortable={Boolean(taskId && !done)}
                 onAbort={onAbort}
+                target={target}
+                onTargetChange={setTarget}
+                showTargetToggle={showTargetToggle}
+                cloudAvailable={cloudAvailable}
+                onCloudLoginRequired={() => setShowCloudLogin(true)}
               />
             </div>
           </div>
         )}
+
+      {/* Cloud login dialog for desktop cloud toggle */}
+      <CloudLoginDialog
+        open={showCloudLogin}
+        onClose={() => setShowCloudLogin(false)}
+        onSuccess={() => {
+          // After successful login, switch to cloud target
+          setTarget("cloud");
+        }}
+      />
       </div>
 
       {/* Right Browser Viewport Pane */}

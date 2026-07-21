@@ -12,7 +12,7 @@ describe("ChromeChoiceCard", () => {
       text: () => Promise.resolve(""),
     });
     vi.stubGlobal("fetch", fetchMock);
-    const client = new OrchestratorClient(7777, "test-token");
+    const client = new OrchestratorClient("http://127.0.0.1:7777", "test-token");
     const onSelect = vi.fn();
     const user = userEvent.setup();
     render(
