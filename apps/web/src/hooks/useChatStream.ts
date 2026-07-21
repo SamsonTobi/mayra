@@ -54,7 +54,7 @@ function systemBubble(text: string, severity: "info" | "warn" | "error"): ChatMe
  * (MAYRA_TECHNICAL_SPEC §3.4, MAYRA_DESKTOP_UX_FLOWS §4.3).
  */
 export function useChatStream(
-  port: number | null,
+  baseUrl: string | null,
   token: string | null,
 ): ChatStreamState & {
   start: (taskId: string) => void;
@@ -100,7 +100,7 @@ export function useChatStream(
 
   const start = useCallback(
     (taskId: string) => {
-      if (port == null || token == null || !taskId) return;
+      if (baseUrl == null || token == null || !taskId) return;
       suppressEsErrorRef.current = true;
       esRef.current?.close();
       esRef.current = null;
@@ -113,7 +113,7 @@ export function useChatStream(
         failed: false,
         lastDoneStatus: undefined,
       }));
-      const url = `http://127.0.0.1:${port}/v1/chat/stream?task_id=${encodeURIComponent(taskId)}&token=${encodeURIComponent(token)}`;
+      const url = `${baseUrl}/v1/chat/stream?task_id=${encodeURIComponent(taskId)}&token=${encodeURIComponent(token)}`;
       const es = new EventSource(url);
       esRef.current = es;
 
@@ -170,7 +170,7 @@ export function useChatStream(
         es.close();
       };
     },
-    [port, token],
+    [baseUrl, token],
   );
 
   const loadHistoryState = useCallback(
