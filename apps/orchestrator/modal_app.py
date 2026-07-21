@@ -115,8 +115,11 @@ app = modal.App("mayra-orchestrator")
         modal.Secret.from_name("mayra-providers"),
         modal.Secret.from_name("mayra-config"),
     ],
-    min_containers=1,             # warm pool — avoids cold starts for most requests
-    scaledown_window=1200,        # 20 minutes before idle container scales down
+    # Scale to zero when idle — no min_containers to avoid 24/7 billing.
+    # Cold start adds ~5-15s on first request after idle, but costs $0 when unused.
+    # scaledown_window=300 keeps the container warm for 5 minutes after the last
+    # request (cheap, avoids repeated cold starts during active use).
+    scaledown_window=300,         # 5 minutes idle → scale to zero
     memory=4096,                  # 4GB for Chromium + Python orchestrator
     cpu=2,
     timeout=600,                  # 10 min max per request (SSE streams can be long)
