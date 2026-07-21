@@ -9,6 +9,7 @@ import { DEFAULT_CHROME_PROBE_PORTS } from "@/lib/chrome-probe";
 import type { HealthzBody, SessionSummary } from "@/lib/orchestrator-client";
 import { getTauriBridge } from "@/lib/tauri";
 import { useOrchestrator } from "@/providers/orchestrator-context";
+import { isWebMode } from "@/lib/mode";
 
 const LAUNCH_DETECT_DELAY_MS = 2500;
 const AUTO_LAUNCH_PORT = 9222;
@@ -28,6 +29,19 @@ type AutoStatus =
   | "error";
 
 export default function SessionsPage() {
+  // In web mode, local Chrome discovery is not available — cloud Chromium is managed by the orchestrator.
+  if (isWebMode()) {
+    return (
+      <div className="page-content">
+        <h1>Browser Sessions</h1>
+        <p className="muted">In web mode, browser sessions are managed automatically by the cloud orchestrator. No local Chrome discovery is needed.</p>
+      </div>
+    );
+  }
+  return <SessionsPageInner />;
+}
+
+function SessionsPageInner() {
   const { client, handshake } = useOrchestrator();
   const [sessions, setSessions] = useState<ChromeSession[]>([]);
   const [error, setError] = useState<string | null>(null);

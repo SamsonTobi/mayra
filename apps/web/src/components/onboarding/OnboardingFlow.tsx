@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useOrchestrator } from "@/providers/orchestrator-context";
+import { isWebMode } from "@/lib/mode";
 import { ProviderSetupCard } from "./ProviderSetupCard";
 import { ChromeChoiceCard } from "./ChromeChoiceCard";
 import { RemoteDebuggingWizard } from "./RemoteDebuggingWizard";
@@ -11,6 +12,9 @@ type Step = "provider" | "chrome" | "remote" | "ready";
 export function OnboardingFlow() {
   const { setChromeMode, markOnboardingComplete } = useOrchestrator();
   const [step, setStep] = useState<Step>("provider");
+
+  // In web mode, onboarding is not needed — cloud mode has no local Chrome to configure.
+  if (isWebMode()) return null;
 
   return (
     <div>

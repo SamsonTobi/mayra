@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useOrchestrator } from "@/providers/orchestrator-context";
 import { getTauriBridge } from "@/lib/tauri";
+import { isWebMode } from "@/lib/mode";
 
 type KeyStatus = {
   configured: boolean;
@@ -13,13 +14,10 @@ type KeyStatus = {
 export function ProviderSettings() {
   const { client } = useOrchestrator();
   const [key, setKey] = useState("");
-  const [groqKey, setGroqKey] = useState("");
-  const [cfAccountId, setCfAccountId] = useState("");
-  const [cfApiToken, setCfApiToken] = useState("");
+  const [openrouterKey, setOpenrouterKey] = useState("");
 
   const [status, setStatus] = useState<KeyStatus | null>(null);
-  const [groqStatus, setGroqStatus] = useState<KeyStatus | null>(null);
-  const [cfStatus, setCfStatus] = useState<KeyStatus | null>(null);
+  const [openrouterStatus, setOpenrouterStatus] = useState<KeyStatus | null>(null);
 
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -37,20 +35,12 @@ export function ProviderSettings() {
         if (!cancelled) setStatus({ configured: false, last4: "" });
       });
 
-    void invoke<KeyStatus>("provider_key_status", { provider: "groq" })
+    void invoke<KeyStatus>("provider_key_status", { provider: "openrouter" })
       .then((next) => {
-        if (!cancelled) setGroqStatus(next);
+        if (!cancelled) setOpenrouterStatus(next);
       })
       .catch(() => {
-        if (!cancelled) setGroqStatus({ configured: false, last4: "" });
-      });
-
-    void invoke<KeyStatus>("provider_key_status", { provider: "cloudflare" })
-      .then((next) => {
-        if (!cancelled) setCfStatus(next);
-      })
-      .catch(() => {
-        if (!cancelled) setCfStatus({ configured: false, last4: "" });
+        if (!cancelled) setOpenrouterStatus({ configured: false, last4: "" });
       });
 
     return () => {
@@ -80,52 +70,23 @@ export function ProviderSettings() {
     }
   }
 
-  async function onSaveGroqKey() {
-    if (!groqKey.trim()) return;
+  async function onSaveOpenrouterKey() {
+    if (!openrouterKey.trim()) return;
     setBusy(true);
-    setMessage("Saving Groq key...");
+    setMessage("Saving OpenRouter key...");
     try {
       await invoke("save_provider_key", {
-        provider: "groq",
-        key: groqKey.trim(),
+        provider: "openrouter",
+        key: openrouterKey.trim(),
       });
-      setGroqKey("");
+      setOpenrouterKey("");
       const next = await invoke<KeyStatus>("provider_key_status", {
-        provider: "groq",
+        provider: "openrouter",
       });
-      setGroqStatus(next);
-      setMessage("Groq key saved. The sidecar restarted.");
+      setOpenrouterStatus(next);
+      setMessage("OpenRouter key saved. The sidecar restarted.");
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Could not save Groq key.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onSaveCfKey() {
-    if (!cfAccountId.trim() || !cfApiToken.trim()) return;
-    setBusy(true);
-    setMessage("Saving Cloudflare credentials...");
-    try {
-      // Combine account id and token behind the scenes
-      const combinedKey = `${cfAccountId.trim()}:${cfApiToken.trim()}`;
-      await invoke("save_provider_key", {
-        provider: "cloudflare",
-        key: combinedKey,
-      });
-      setCfAccountId("");
-      setCfApiToken("");
-      const next = await invoke<KeyStatus>("provider_key_status", {
-        provider: "cloudflare",
-      });
-      setCfStatus(next);
-      setMessage("Cloudflare credentials saved. The sidecar restarted.");
-    } catch (e) {
-      setMessage(
-        e instanceof Error
-          ? e.message
-          : "Could not save Cloudflare credentials.",
-      );
+      setMessage(e instanceof Error ? e.message : "Could not save OpenRouter key.");
     } finally {
       setBusy(false);
     }
@@ -148,37 +109,18 @@ export function ProviderSettings() {
     }
   }
 
-  async function onValidateGroq() {
+  async function onValidateOpenrouter() {
     if (!client) return;
     setBusy(true);
-    setMessage("Validating Groq...");
+    setMessage("Validating OpenRouter...");
     try {
       const result = await client.validateSettings({
-        provider: "groq",
-        model: "meta-llama/llama-4-scout-17b-16e-instruct",
+        provider: "openrouter",
+        model: "qwen/qwen3-vl-30b-a3b",
       });
-      setMessage(`Groq responded in ${result.latency_ms} ms.`);
+      setMessage(`OpenRouter responded in ${result.latency_ms} ms.`);
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Groq validation failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onValidateCf() {
-    if (!client) return;
-    setBusy(true);
-    setMessage("Validating Cloudflare...");
-    try {
-      const result = await client.validateSettings({
-        provider: "cloudflare",
-        model: "@cf/meta/llama-3.1-8b-instruct",
-      });
-      setMessage(`Cloudflare responded in ${result.latency_ms} ms.`);
-    } catch (e) {
-      setMessage(
-        e instanceof Error ? e.message : "Cloudflare validation failed.",
-      );
+      setMessage(e instanceof Error ? e.message : "OpenRouter validation failed.");
     } finally {
       setBusy(false);
     }
@@ -238,82 +180,46 @@ export function ProviderSettings() {
       </div>
 
       <div style={{ marginTop: "1.5rem" }}>
-        <label className="muted" htmlFor="groq-key">
-          Groq API key
+        <label className="muted" htmlFor="openrouter-key">
+          OpenRouter API key
         </label>
+        {tauriReady && openrouterStatus ? (
+          <p className="muted" style={{ marginBottom: "0.75rem" }}>
+            {openrouterStatus.configured ? (
+              <>
+                OpenRouter key is saved (last 4:{" "}
+                <code>{openrouterStatus.last4}</code>).
+              </>
+            ) : (
+              <>No OpenRouter key saved yet — paste below and click Save.</>
+            )}
+          </p>
+        ) : null}
         <div className="row" style={{ gap: "0.75rem", marginTop: "0.5rem" }}>
           <input
-            id="groq-key"
+            id="openrouter-key"
             type="password"
-            value={groqKey}
+            value={openrouterKey}
             placeholder={
-              groqStatus?.configured
-                ? `Configured ending in ${groqStatus.last4}`
-                : "Paste key"
+              openrouterStatus?.configured
+                ? `Configured ending in ${openrouterStatus.last4}`
+                : "Paste key (sk-or-v1-...)"
             }
-            onChange={(event) => setGroqKey(event.target.value)}
+            onChange={(event) => setOpenrouterKey(event.target.value)}
             disabled={!tauriReady || busy}
           />
           <button
             type="button"
             className="btn btn-primary"
-            onClick={onSaveGroqKey}
-            disabled={!tauriReady || busy || !groqKey.trim()}
+            onClick={onSaveOpenrouterKey}
+            disabled={!tauriReady || busy || !openrouterKey.trim()}
           >
             Save
           </button>
           <button
             type="button"
             className="btn"
-            onClick={onValidateGroq}
-            disabled={!client || busy}
-          >
-            Validate
-          </button>
-        </div>
-      </div>
-
-      <div style={{ marginTop: "1.5rem" }}>
-        <label className="muted" htmlFor="cf-account-id">
-          Cloudflare Credentials
-        </label>
-        <div className="row" style={{ gap: "0.75rem", marginTop: "0.5rem" }}>
-          <input
-            id="cf-account-id"
-            type="text"
-            value={cfAccountId}
-            placeholder={
-              cfStatus?.configured ? "Account ID configured" : "Account ID"
-            }
-            onChange={(event) => setCfAccountId(event.target.value)}
-            disabled={!tauriReady || busy}
-          />
-          <input
-            id="cf-api-token"
-            type="password"
-            value={cfApiToken}
-            placeholder={
-              cfStatus?.configured
-                ? `Token ending in ${cfStatus.last4}`
-                : "API Token"
-            }
-            onChange={(event) => setCfApiToken(event.target.value)}
-            disabled={!tauriReady || busy}
-          />
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={onSaveCfKey}
-            disabled={
-              !tauriReady || busy || !cfAccountId.trim() || !cfApiToken.trim()
-            }
-          >
-            Save
-          </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={onValidateCf}
+            onClick={onValidateOpenrouter}
             disabled={!client || busy}
           >
             Validate
@@ -322,7 +228,11 @@ export function ProviderSettings() {
       </div>
 
       {!tauriReady ? (
-        <p className="muted">Open the desktop shell to save provider keys.</p>
+        isWebMode() ? (
+          <p className="muted">Provider keys are managed by your administrator on the cloud orchestrator.</p>
+        ) : (
+          <p className="muted">Open the desktop shell to save provider keys.</p>
+        )
       ) : null}
       {message ? <p className="muted">{message}</p> : null}
     </section>
