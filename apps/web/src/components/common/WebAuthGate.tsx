@@ -32,8 +32,12 @@ export function WebAuthGate({ children }: { children: ReactNode }) {
   // In desktop mode, always render
   if (!isWebMode()) return <>{children}</>;
 
-  // In web mode, render login page content if on /login, else gate
+  // In web mode, always render the login page (even before mount/auth check)
   if (pathname === "/login") return <>{children}</>;
+
+  // In web mode, gate other pages until we know auth state.
+  // authenticated is false until CloudAuthProvider mounts + reads localStorage,
+  // so we must return null to avoid flashing protected content.
   if (!authenticated) return null;
 
   return <>{children}</>;
