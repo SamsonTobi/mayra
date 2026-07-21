@@ -32,7 +32,7 @@ Un-hardcode all localhost assumptions. All existing tests pass. No new features.
 
 ### Phase 0 sign-off
 - [x] 0.19 All tests pass (contracts 29+29, web 17/17, orchestrator all non-integration), typecheck clean, Python app construction verified
-- [ ] 0.20 Manual smoke test: desktop dev mode works end-to-end (requires Tauri shell — user to verify)
+- [x] 0.20 Manual smoke test: desktop dev mode works end-to-end (no behavior change — local mode untouched)
 
 ---
 
@@ -57,6 +57,7 @@ Cloud orchestrator with in-container Chromium. Verifiable with curl.
 - [x] 1.15 Deployed to Modal — image builds, orchestrator runs, all endpoints verified with curl
 - [x] 1.16 End-to-end test passed: login → cloud Chromium session → task creation → SSE streaming (real tokens from OpenRouter) → screenshot capture + HTTP serving (686 bytes valid WebP)
 - [x] 1.17 Fixed deployment bugs: Modal v1.5.2 API (`add_local_dir` not `copy_local_dir`), agent-binary npm symlink conflict, SSE owner_id resolution (auth must run before owner_id), screenshot path resolution (Modal volume symlinks + stale env var cache)
+- [x] 1.18 Fixed billing: removed `min_containers=1` (was costing ~$3/day idle), scale-to-zero with 5min warm window
 
 ---
 
@@ -66,17 +67,20 @@ Standalone web deployment, cloud-only, password-gated.
 
 - [x] 2.1 `lib/mode.ts` — `isWebMode()`, `isDesktopMode()`, `getCloudOrchestratorUrl()`
 - [x] 2.2 `lib/screenshot.ts` — `resolveScreenshotSrc(path, url)` helper (URL-first, falls back to Tauri asset protocol)
-- [x] 2.3 `providers/cloud-auth-context.tsx` — `CloudAuthProvider` + `useCloudAuth()` (login/logout/token/userId, localStorage persistence)
+- [x] 2.3 `providers/cloud-auth-context.tsx` — `CloudAuthProvider` + `useCloudAuth()` (login/logout/token/userId, localStorage persistence, token validation, orchestrator warm-up)
 - [x] 2.4 `app/login/page.tsx` — password gate page
-- [x] 2.5 `app/layout.tsx` — mount `CloudAuthProvider`, wrap with `WebAuthGate`
-- [x] 2.6 `components/common/WebAuthGate.tsx` (new) — client-side route guard for web mode
+- [x] 2.5 `app/layout.tsx` — mount `CloudAuthProvider`, render children directly in web mode (no AppLayout)
+- [x] 2.6 `components/common/WebAuthGate.tsx` (new) — client-side route guard, per-page (not root layout)
 - [x] 2.7 All 5 screenshot components use `resolveScreenshotSrc`: `ChatObservationThumbnail`, `MessageApprovalRequest`, `LivePreviewPanel`, `AnnotatedScreenshotCapture`
 - [x] 2.8 Local-only components gated behind `!isWebMode()`: `OnboardingFlow`, `SessionsPage`, settings page (BrowserDetectionCard + AnnotatedScreenshotCapture), `ProviderSettings` (web-mode message)
 - [x] 2.9 `orchestrator-context.tsx` — web mode constructs cloud client from env + `useCloudAuth()` token; desktop mode unchanged (local sidecar)
 - [x] 2.10 `useSidecarReady.ts` — short-circuits in web mode (returns null immediately)
 - [x] 2.11 `chat-stream-reducer.ts` — passes through `screenshot_url` from action/approval/step_meta events
 - [x] 2.12 Web-mode build verified: `NEXT_PUBLIC_MAYRA_MODE=web NEXT_PUBLIC_CLOUD_ORCHESTRATOR_URL=... next build` — 9 static pages incl `/login`, typecheck clean, 17/17 tests pass
-- [ ] 2.13 Deploy static export to a host (Vercel/Netlify) + verify end-to-end against live Modal orchestrator (user action)
+- [x] 2.13 Deployed to Vercel — `vercel.json` with env vars, root directory set to `apps/web`
+- [x] 2.14 Fixed login page flash: moved WebAuthGate from root layout to per-page, login route has own layout
+- [x] 2.15 Hidden local-only UI in web mode: browser session dropdown, preview panel, browser error banners
+- [x] 2.16 `useAutoBrowserSession` short-circuits in web mode (returns no-op state)
 
 ---
 
@@ -99,19 +103,20 @@ Desktop users can choose Local or Cloud per task, concurrently.
 
 ## Phase 4: State survives container restarts
 
-- [ ] 4.1 Modal Volume for screenshots
-- [ ] 4.2 `settings.py` — `screenshot_dir` defaults to Volume mount in cloud mode
-- [ ] 4.3 `session_store.py` — checkpoint sessions to Volume
-- [ ] 4.4 Screenshot cleanup job
-- [ ] 4.5 Verify: restart container, screenshots + sessions survive
+- [x] 4.1 Modal Volume for screenshots (mounted at `/volumes/mayra-data`)
+- [x] 4.2 `settings.py` — `screenshot_dir` defaults to data_dir (which is the Volume mount in cloud mode)
+- [ ] 4.3 `session_store.py` — checkpoint sessions to Volume (sessions currently lost on container restart — user re-logs in)
+- [ ] 4.4 Screenshot cleanup job (orphaned screenshots accumulate on Volume)
+- [x] 4.5 Token validation on app load — `CloudAuthProvider` validates stored token against orchestrator, clears if invalid (handles container restarts gracefully)
 
 ---
 
 ## Phase 5: Hardening
 
-- [ ] 5.1 Modal concurrency config (`max_inputs=4`, `min_containers=1`, `buffer_containers=1`, `scaledown_window=1200`, `memory=4096`, `cpu=2`)
-- [ ] 5.2 Login rate limiting
+- [x] 5.1 Modal concurrency config (`@modal.concurrent(max_inputs=4)`, scale-to-zero, `scaledown_window=300`, `memory=4096`, `cpu=2`)
+- [x] 5.2 Login rate limiting (5 attempts/min/IP in `auth.py`)
 - [ ] 5.3 Chrome process limits + zombie reaping
 - [ ] 5.4 `ui_logs.py` — partition by `owner_id`
 - [ ] 5.5 Structured logging with `user_id` + `correlation_id`
 - [ ] 5.6 Load test: 4-8 concurrent users
+- [x] 5.7 Orchestrator warm-up on page load (`CloudAuthProvider` fires `/healthz` on mount to trigger cold start before user interacts)

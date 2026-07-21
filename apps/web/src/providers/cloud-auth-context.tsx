@@ -19,6 +19,8 @@ export type CloudAuthState = {
   userId: string | null;
   login: (password: string) => Promise<void>;
   logout: () => void;
+  /** True while validating the stored token against the orchestrator */
+  validating: boolean;
 };
 
 const CloudAuthCtx = createContext<CloudAuthState | null>(null);
@@ -44,20 +46,72 @@ function readStoredToken(): { token: string; userId: string; expiresAt: string }
   return { token, userId, expiresAt };
 }
 
+/**
+ * Validate a token against the orchestrator by calling /healthz with the token.
+ * Returns true if the orchestrator accepts the token, false otherwise.
+ * Also serves as a warm-up call — the container starts booting when this fires.
+ */
+async function validateToken(cloudUrl: string, token: string): Promise<boolean> {
+  try {
+    const r = await fetch(`${cloudUrl}/v1/sessions`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(30_000), // 30s — cold start can take 15s
+    });
+    return r.ok;
+  } catch {
+    // Network error (cold start timeout) — assume token is still valid,
+    // the container just needs more time. Don't log the user out.
+    return true;
+  }
+}
+
 export function CloudAuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [validating, setValidating] = useState(false);
 
-  // Load stored token on mount
+  // Load stored token on mount + validate it + warm up the orchestrator
   useEffect(() => {
     const stored = readStoredToken();
     if (stored) {
       setToken(stored.token);
       setUserId(stored.userId);
+
+      // Validate the token against the orchestrator.
+      // This also warms up the container (triggers cold start if scaled to zero).
+      const cloudUrl = getCloudUrl();
+      if (cloudUrl) {
+        setValidating(true);
+        validateToken(cloudUrl, stored.token).then((valid) => {
+          setValidating(false);
+          if (!valid) {
+            // Token is invalid (expired on server, container restarted, etc.)
+            // Clear it — user will need to log in again
+            localStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem(USER_ID_KEY);
+            localStorage.removeItem(EXPIRES_KEY);
+            setToken(null);
+            setUserId(null);
+          }
+        });
+      } else {
+        setMounted(true);
+      }
     }
     setMounted(true);
   }, []);
+
+  // Also warm up the orchestrator on login page mount (even without a token)
+  // so the container is ready by the time the user submits the password.
+  useEffect(() => {
+    const cloudUrl = getCloudUrl();
+    if (!cloudUrl || token) return; // skip if already have a token
+    // Fire-and-forget healthz call to warm up the container
+    fetch(`${cloudUrl}/healthz`, { signal: AbortSignal.timeout(30_000) }).catch(
+      () => {},
+    );
+  }, [token]);
 
   const login = useCallback(async (password: string) => {
     const cloudUrl = getCloudUrl();
@@ -106,6 +160,7 @@ export function CloudAuthProvider({ children }: { children: ReactNode }) {
     userId,
     login,
     logout,
+    validating,
   };
 
   return (

@@ -14,6 +14,7 @@ import { Dropdown } from "../common/Dropdown";
 import { CloudLoginDialog } from "./CloudLoginDialog";
 import { LocalCloudToggle, type TaskTarget } from "./LocalCloudToggle";
 import { isWebMode, isDesktopMode, getCloudOrchestratorUrl } from "@/lib/mode";
+import { useCloudAuth } from "@/providers/cloud-auth-context";
 import type { ChatMessage } from "@mayra/contracts";
 
 function conversationHistory(
@@ -68,6 +69,8 @@ export function ChatWindow() {
     cloudAvailable,
   } = useOrchestrator();
   const browserSession = useAutoBrowserSession();
+  const cloudAuth = useCloudAuth();
+  const webMode = isWebMode();
   const [taskId, setTaskId] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const lastProviderRef = useRef("");
@@ -390,41 +393,53 @@ export function ChatWindow() {
             <div
               style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
             >
-              <span
-                className={`status-dot ${browserSession.ready ? "ready" : browserSession.status === "error" ? "error" : "working"}`}
-              />
-              <Dropdown
-                value={browserSession.sessionId || ""}
-                onChange={(val) => browserSession.setSessionId(val)}
-                options={sessionOptions}
-                disabled={
-                  !client || !browserSession.ready || Boolean(taskId && !done)
-                }
-                placeholder="Select Browser Session"
-                triggerStyle={{ minWidth: "180px" }}
-              />
-              <button
-                type="button"
-                onClick={() => setPreviewOpen(!previewOpen)}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: previewOpen ? "var(--fg)" : "var(--muted)",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: "0.4rem",
-                  borderRadius: "8px",
-                  transition: "all 0.2s",
-                }}
-                className="preview-toggle-btn"
-                title={
-                  previewOpen ? "Hide browser preview" : "Show browser preview"
-                }
-              >
-                <SidebarIcon />
-              </button>
+              {/* Hide the browser session dropdown + preview toggle in web mode
+                  (cloud mode manages Chromium automatically — no local session selection) */}
+              {!webMode && (
+                <>
+                  <span
+                    className={`status-dot ${browserSession.ready ? "ready" : browserSession.status === "error" ? "error" : "working"}`}
+                  />
+                  <Dropdown
+                    value={browserSession.sessionId || ""}
+                    onChange={(val) => browserSession.setSessionId(val)}
+                    options={sessionOptions}
+                    disabled={
+                      !activeClient || !browserSession.ready || Boolean(taskId && !done)
+                    }
+                    placeholder="Select Browser Session"
+                    triggerStyle={{ minWidth: "180px" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setPreviewOpen(!previewOpen)}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: previewOpen ? "var(--fg)" : "var(--muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: "0.4rem",
+                      borderRadius: "8px",
+                      transition: "all 0.2s",
+                    }}
+                    className="preview-toggle-btn"
+                    title={
+                      previewOpen ? "Hide browser preview" : "Show browser preview"
+                    }
+                  >
+                    <SidebarIcon />
+                  </button>
+                </>
+              )}
+              {/* Web mode: show a warm-up indicator while the orchestrator is cold-starting */}
+              {webMode && cloudAuth.validating && (
+                <span style={{ fontSize: "0.75rem", color: "var(--muted, #888)" }}>
+                  Warming up cloud orchestrator…
+                </span>
+              )}
             </div>
           </div>
         </header>
@@ -447,7 +462,7 @@ export function ChatWindow() {
                 onCloudLoginRequired={() => setShowCloudLogin(true)}
               />
             </div>
-            {browserSession.error && (
+            {!webMode && browserSession.error && (
               <div
                 className="banner"
                 style={{ marginTop: "1rem", width: "100%" }}
@@ -568,7 +583,7 @@ export function ChatWindow() {
                 alignItems: "center",
               }}
             >
-              {browserSession.error && (
+              {!webMode && browserSession.error && (
                 <div
                   className="banner"
                   style={{
@@ -607,8 +622,8 @@ export function ChatWindow() {
       />
       </div>
 
-      {/* Right Browser Viewport Pane */}
-      {showPreview && (
+      {/* Right Browser Viewport Pane — hidden in web mode (requires local CDP) */}
+      {showPreview && !webMode && (
         <div
           style={{
             width: "400px",
@@ -622,7 +637,7 @@ export function ChatWindow() {
           <LivePreviewPanel
             screenshotPath={lastShot}
             sessionId={browserSession.sessionId}
-            client={client}
+            client={activeClient}
           />
         </div>
       )}

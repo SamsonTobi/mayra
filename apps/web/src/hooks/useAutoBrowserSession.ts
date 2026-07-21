@@ -116,6 +116,34 @@ export function useAutoBrowserSession(): AutoBrowserSessionState {
   const [lastNodeCount, setLastNodeCount] = useState<number | null>(null);
   const attemptedForPort = useRef<number | null>(null);
 
+  // In web mode, return a no-op state — cloud mode manages Chromium automatically.
+  // This hook is for local Chrome discovery/launch only.
+  const webMode = typeof window !== "undefined" && process.env.NEXT_PUBLIC_MAYRA_MODE === "web";
+  useEffect(() => {
+    if (webMode) {
+      setStatus("ready");
+    }
+  }, [webMode]);
+
+  if (webMode) {
+    return {
+      status: "ready",
+      statusText: "Cloud mode",
+      statusExtra: undefined,
+      busy: false,
+      error: null,
+      healthError: null,
+      sessions: [],
+      sessionId: "",
+      setSessionId: () => {},
+      previewPath: null,
+      lastNodeCount: null,
+      refresh: async () => {},
+      retry: async () => {},
+      ready: true,
+    } as AutoBrowserSessionState;
+  }
+
   const refresh = useCallback(async () => {
     if (!client) return;
     log("refresh: fetching sessions");
