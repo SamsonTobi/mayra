@@ -14,7 +14,7 @@ export function LogsClient() {
 
   if (taskId) {
     return (
-      <section>
+      <div className="page-content">
         <p>
           <Link href="/logs">← Back to logs</Link>
         </p>
@@ -22,17 +22,17 @@ export function LogsClient() {
         <p className="muted">
           Drill-down for <code>{taskId}</code>. Supabase reads land in T10.
         </p>
-      </section>
+      </div>
     );
   }
 
   return (
-    <section>
+    <div className="page-content">
       <h1>Logs</h1>
       <p className="muted">
         Paginated task list from Supabase (RLS) — wired in T10. Example drill-down:{" "}
         <a href="/logs?t=demo-task">/logs?t=demo-task</a>
       </p>
-    </section>
+    </div>
   );
 }

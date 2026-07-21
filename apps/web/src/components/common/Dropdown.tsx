@@ -32,7 +32,9 @@ export function Dropdown({
   variant = "default",
 }: DropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [placement, setPlacement] = useState<"bottom" | "top">("bottom");
   const containerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
 
   useEffect(() => {
     function handleOutsideClick(e: MouseEvent) {
@@ -43,6 +45,18 @@ export function Dropdown({
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, []);
+
+  const handleToggle = () => {
+    if (disabled) return;
+    const nextOpen = !isOpen;
+    setIsOpen(nextOpen);
+    if (nextOpen && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const menuHeight = Math.min(options.length * 36 + 16, 320);
+      setPlacement(spaceBelow < menuHeight ? "top" : "bottom");
+    }
+  };
 
   const selectedOption = options.find((opt) => opt.value === value);
 
@@ -55,7 +69,7 @@ export function Dropdown({
       <button
         type="button"
         className="custom-dropdown-trigger"
-        onClick={() => !disabled && setIsOpen(!isOpen)}
+        onClick={handleToggle}
         disabled={disabled}
         style={{
           display: "flex",
@@ -74,7 +88,10 @@ export function Dropdown({
       </button>
 
       {isOpen && (
-        <ul className="custom-dropdown-menu">
+        <ul
+          ref={menuRef}
+          className={`custom-dropdown-menu ${placement === "top" ? "upward" : ""}`}
+        >
           {options.map((opt) => (
             <li
               key={opt.value}

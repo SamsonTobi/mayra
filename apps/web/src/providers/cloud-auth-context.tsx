@@ -158,16 +158,15 @@ export function CloudAuthProvider({ children }: { children: ReactNode }) {
 
   // Called when a 401 is received from the orchestrator (e.g. container
   // restarted and the in-memory SessionStore lost the token).
-  // Clears the token and redirects to /login for re-authentication.
+  // Clears the token but does NOT force-redirect — the WebAuthGate will
+  // redirect on next render. This prevents kicking the user out mid-task
+  // if a background API call fails.
   const handleUnauthorized = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_ID_KEY);
     localStorage.removeItem(EXPIRES_KEY);
     setToken(null);
     setUserId(null);
-    if (typeof window !== "undefined" && window.location.pathname !== "/login") {
-      window.location.href = "/login";
-    }
   }, []);
 
   const value: CloudAuthState = {
