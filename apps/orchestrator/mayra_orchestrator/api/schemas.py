@@ -41,7 +41,7 @@ class ApproveRequest(StrictModel):
 
 
 class ValidateSettingsRequest(StrictModel):
-    provider: Literal["cloudflare", "gemini", "groq"]
+    provider: Literal["gemini", "openrouter"]
     model: str
 
 
@@ -60,7 +60,8 @@ class UILogResponse(StrictModel):
 
 
 class SessionConnectRequest(StrictModel):
-    port: int = Field(ge=1, le=65535)
+    # In cloud mode, port may be omitted — the orchestrator launches Chromium.
+    port: int | None = Field(default=None, ge=1, le=65535)
 
 
 class SessionConnectResponse(StrictModel):
@@ -76,11 +77,13 @@ class SessionSummary(StrictModel):
 class SessionSnapshotResponse(StrictModel):
     node_count: int
     screenshot_path: str
+    screenshot_url: str | None = None
 
 
 class ConnectAndVerifyResponse(StrictModel):
     session_id: str
     node_count: int
     screenshot_path: str
+    screenshot_url: str | None = None
 
 
