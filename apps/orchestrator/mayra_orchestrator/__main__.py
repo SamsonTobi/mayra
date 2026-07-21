@@ -42,6 +42,39 @@ def _parse_cli() -> tuple[int, str, Path]:
     return port, token, data_dir
 
 
+def _configure_logging() -> None:
+    """Set up logging so only signal surfaces, not library chatter.
+
+    Per-step browser/model work touches httpx, websockets, PIL, and asyncio —
+    each of which logs 5-20 DEBUG lines per call at root DEBUG level. That
+    floods the console and buries the agent-loop / adapter lines we actually
+    need to debug stuck clicks. Keep `mayra.orchestrator.*` at DEBUG (we own
+    those) and silence the rest.
+    """
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+        stream=sys.stderr,
+    )
+    # Our own loggers stay at DEBUG — step transitions, pre/post tab diff,
+    # DOM state signatures, agent-browser subprocess payloads.
+    logging.getLogger("mayra.orchestrator").setLevel(logging.DEBUG)
+    logging.getLogger("mayra_orchestrator").setLevel(logging.DEBUG)
+    # Library noise that fires on every HTTP/WS/PIL call:
+    for noisy in (
+        "httpcore",
+        "httpx",
+        "websockets",
+        "asyncio",
+        "PIL",
+        "PIL.PngImagePlugin",
+        "PIL.Image",
+        "keyring",
+    ):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
 def main() -> None:
     if sys.platform == "win32":
         import asyncio
@@ -50,12 +83,7 @@ def main() -> None:
         # sockets on Windows — causing proc.communicate() to hang forever.
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stderr,
-    )
+    _configure_logging()
 
     port, token, data_dir = _parse_cli()
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -63,7 +91,8 @@ def main() -> None:
     os.environ["MAYRA_DATA_DIR"] = str(data_dir)
     settings = AppSettings(token=token, include_contract_routes=True, data_dir=data_dir)
     app = create_app(settings)
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+    host = os.environ.get("MAYRA_HOST", "127.0.0.1")
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":
