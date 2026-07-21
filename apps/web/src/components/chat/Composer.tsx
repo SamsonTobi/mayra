@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { ArrowUp, Square } from "@phosphor-icons/react";
 import { Dropdown } from "../common/Dropdown";
+import { LocalCloudToggle, type TaskTarget } from "./LocalCloudToggle";
 
 const PROVIDER_STORAGE_KEY = "mayra.chat.provider";
 
@@ -11,6 +12,12 @@ type Props = {
   disabled?: boolean;
   isAbortable?: boolean;
   onAbort?: () => void;
+  // Per-task target toggle (desktop mode only)
+  target?: TaskTarget;
+  onTargetChange?: (target: TaskTarget) => void;
+  showTargetToggle?: boolean;
+  cloudAvailable?: boolean;
+  onCloudLoginRequired?: () => void;
 };
 
 function readStoredProvider(): string {
@@ -22,7 +29,17 @@ function readStoredProvider(): string {
   }
 }
 
-export function Composer({ onSend, disabled, isAbortable, onAbort }: Props) {
+export function Composer({
+  onSend,
+  disabled,
+  isAbortable,
+  onAbort,
+  target,
+  onTargetChange,
+  showTargetToggle,
+  cloudAvailable,
+  onCloudLoginRequired,
+}: Props) {
   const [text, setText] = useState("");
   const [provider, setProvider] = useState(readStoredProvider);
   const [isMultiline, setIsMultiline] = useState(false);
@@ -77,11 +94,26 @@ export function Composer({ onSend, disabled, isAbortable, onAbort }: Props) {
     }
   };
 
+  // The `value` here is the literal OpenRouter model ID sent straight to the
+  // orchestrator as `provider`. The orchestrator's `_ordered_provider_clients`
+  // sees it isn't a known provider slug ("openrouter"/"gemini") and routes it
+  // through the OpenRouter client with `rec._model_override = <this value>`,
+  // which `_build_stream_body` then sends as the `model` field in the API
+  // request. Empty string = Auto (orchestrator picks from the fallback list,
+  // which defaults to Gemini 2.5 Flash-Lite for speed and cost).
+  //
+  // Gemini 2.5 Flash-Lite is the default for 90% of standard clicking,
+  // navigation, and form-filling — it's extremely fast and cheap. Stronger
+  // models (Qwen3-VL-30B, Gemini Flash, GLM-4.6V) are available for complex
+  // reasoning tasks.
   const providerOptions = [
-    { value: "", label: "Auto (Fallback)" },
-    { value: "gemini", label: "Gemini" },
-    { value: "groq", label: "Groq" },
-    { value: "cloudflare", label: "Cloudflare" },
+    { value: "", label: "Auto" },
+    { value: "google/gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite (recommended)" },
+    { value: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+    { value: "qwen/qwen3-vl-30b-a3b-instruct", label: "Qwen3-VL 30B" },
+    { value: "z-ai/glm-4.6v", label: "GLM-4.6V" },
+    { value: "xiaomi/mimo-v2.5", label: "MiMo-V2.5" },
+    { value: "minimax/minimax-m3", label: "MiniMax M3" },
   ];
 
   return (
@@ -93,10 +125,22 @@ export function Composer({ onSend, disabled, isAbortable, onAbort }: Props) {
         disabled={disabled}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Ask Mayra to do anything on the web..."
+        placeholder={
+          isAbortable
+            ? "Steer the agent or stop it..."
+            : "Ask Mayra to do anything on the web..."
+        }
         className="composer-textarea"
       />
       <div className="composer-actions-row">
+        {showTargetToggle && target && onTargetChange ? (
+          <LocalCloudToggle
+            value={target}
+            onChange={onTargetChange}
+            cloudAvailable={cloudAvailable ?? false}
+            onCloudLoginRequired={onCloudLoginRequired}
+          />
+        ) : null}
         <Dropdown
           value={provider}
           onChange={setProvider}
@@ -105,26 +149,30 @@ export function Composer({ onSend, disabled, isAbortable, onAbort }: Props) {
           placeholder="Model"
           variant="clean"
         />
-        {isAbortable ? (
+        {/* Show the stop button when the agent is running */}
+        {isAbortable && onAbort ? (
           <button
             type="button"
-            className="composer-send-btn"
+            className="composer-abort-btn"
             onClick={onAbort}
             disabled={disabled}
             title="Stop agent"
+            aria-label="Stop agent"
           >
             <Square size={16} weight="fill" />
           </button>
-        ) : (
-          <button
-            type="submit"
-            className="composer-send-btn"
-            disabled={disabled || !text.trim()}
-            title="Send"
-          >
-            <ArrowUp size={16} weight="bold" />
-          </button>
-        )}
+        ) : null}
+        {/* Always show the send button — the user can send steering
+            messages to a running agent at any time. */}
+        <button
+          type="submit"
+          className="composer-send-btn"
+          disabled={disabled || !text.trim()}
+          title="Send"
+          aria-label="Send message"
+        >
+          <ArrowUp size={16} weight="bold" />
+        </button>
       </div>
     </form>
   );
