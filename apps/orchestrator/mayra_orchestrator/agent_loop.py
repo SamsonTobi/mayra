@@ -280,7 +280,7 @@ async def _run_agent_loop_body(
         _warmup_browser(app, browser, browser_session_id),
     )
     log.info("[agent_loop] warmup complete, entering main loop")
-    await _update_browser_overlay(browser, browser_session_id, "observing", "Starting", "Step 1")
+    await _update_browser_overlay(browser, browser_session_id, "idle", "Ready", "")
     stuck_repeats = 0
 
     while True:
@@ -317,6 +317,7 @@ async def _run_agent_loop_body(
                 max_steps=step_cap,
                 active_tabs=None,
                 model_override=getattr(rec, "_model_override", None),
+                current_url="about:blank",
             )
             await _update_browser_overlay(browser, browser_session_id, "thinking", "Thinking", f"Step {step_no}")
             chat_stream = _ChatReplyStreamer(rec)
@@ -339,18 +340,16 @@ async def _run_agent_loop_body(
             history.append(f"assistant:{chat}")
             rec.agent_history = list(history)
             app.state.registry.persist()
-            # Emit a stub action log so the UI doesn't look broken
-            if action.action in ("wait",):
-                await _emit_action_log(
-                    rec, action, executed=True, step=step_no, screenshot_path=None, app=app
-                )
-            continue
+            # Conversational messages are done — emit done so the loop stops.
+            # The user can send their actual task as a follow-up message.
+            await _emit_done(rec, task_id, "success")
+            return
 
         await _emit_status(
             rec,
-            f"Step {step_no}: reading browser snapshot and capturing screenshot for the model.",
+            f"Reading the page…",
         )
-        await _update_browser_overlay(browser, browser_session_id, "observing", "Observing", f"Step {step_no}")
+        await _update_browser_overlay(browser, browser_session_id, "observing", "Reading page", f"Step {step_no}")
         # Move port lookup here so _get_active_tabs can run concurrently with
         # the snapshot and screenshot subprocesses instead of sequentially after.
         # Use getattr so browser adapters that don't expose _session_ports
@@ -477,9 +476,12 @@ async def _run_agent_loop_body(
         # element" from "model clicked the right element but the click was
         # intercepted / handler threw / element was in an iframe".
         await _save_step_snapshot_json(app, task_id, step_no, snap_dict)
+        # Extract current page URL for the prompt
+        _snap_data = snap_dict.get("data", snap_dict) if isinstance(snap_dict.get("data"), dict) else snap_dict
+        _current_url = _snap_data.get("url") or _snap_data.get("pageUrl") or _snap_data.get("page_url")
         image_note = f" with screenshot ({len(screenshot_bytes)} bytes)" if screenshot_bytes else ""
         await _emit_status(
-            rec, f"Step {step_no}: asking the model for the next response{image_note}."
+            rec, f"Thinking…{image_note}",
         )
         await _update_browser_overlay(browser, browser_session_id, "thinking", "Thinking", f"Step {step_no}")
         bundle = build_prompt(
@@ -493,6 +495,7 @@ async def _run_agent_loop_body(
             max_steps=step_cap,
             active_tabs=active_tabs,
             model_override=getattr(rec, "_model_override", None),
+            current_url=_current_url if isinstance(_current_url, str) else None,
         )
 
         chat_stream = _ChatReplyStreamer(rec)
@@ -1693,11 +1696,22 @@ async def _get_active_tabs(port: int | None) -> list[dict[str, Any]]:
 
 
 _CONVERSATIONAL_PATTERNS: tuple[str, ...] = (
+    # Pauses / holds
     "hold on", "wait a sec", "wait a moment", "give me a sec",
     "one moment", "just a moment", "hang on", "hold up", "pause",
     "stop", "don't do anything", "do nothing", "stay",
     "let me", "i need to", "i'll", "i will",
     "not yet", "don't start", "don't go", "don't proceed",
+    # Greetings
+    "hi", "hello", "hey", "hola", "howdy", "yo", "sup",
+    "what's up", "whats up", "good morning", "good afternoon",
+    "good evening", "greetings",
+    # Thanks / reactions
+    "thanks", "thank you", "thx", "cool", "nice", "awesome",
+    "great", "ok", "okay", "got it", "understood",
+    # Capability questions
+    "what can you do", "who are you", "help", "what are you",
+    "how do you work", "what do you do",
 )
 
 

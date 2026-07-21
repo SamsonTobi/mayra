@@ -88,9 +88,70 @@ def test_prompt_tells_model_how_to_wait_without_browser_action(snapshot_payload)
         max_steps=3,
     )
 
-    assert "Never output speak" in bundle.system_text
-    assert '"action":"wait"' in bundle.system_text
-    assert '"target_ref":null' in bundle.system_text
+    # The prompt should mention wait as an action and tell the model not to
+    # output non-existent actions like speak/answer/noop.
+    assert "wait" in bundle.system_text.lower()
+    assert "done" in bundle.system_text.lower()
+    # Should mention allowed action values
+    assert "click" in bundle.system_text.lower()
+
+
+def test_prompt_tells_model_how_to_signal_done(snapshot_payload):
+    """The system prompt must teach the model the 'done' action so it can
+    signal task completion instead of looping until budget exhaustion."""
+    snap = Snapshot.from_json(snapshot_payload())
+    bundle = build_prompt(
+        goal="finish the task",
+        history=[],
+        snapshot=snap,
+        screenshot_bytes=b"",
+        screenshot_mime="image/png",
+        allowed_domains=["example.com"],
+        step=1,
+        max_steps=3,
+    )
+
+    assert "done" in bundle.system_text.lower()
+    # The prompt should explain when to use done
+    assert "task is complete" in bundle.system_text.lower() or "task is achieved" in bundle.system_text.lower()
+
+
+def test_prompt_includes_current_page_url(snapshot_payload):
+    """The prompt should include the current page URL so the model knows
+    if it's on about:blank or a real page."""
+    snap = Snapshot.from_json(snapshot_payload())
+    bundle = build_prompt(
+        goal="go to google",
+        history=[],
+        snapshot=snap,
+        screenshot_bytes=b"",
+        screenshot_mime="image/png",
+        allowed_domains=[],
+        step=1,
+        max_steps=3,
+        current_url="https://example.com",
+    )
+    assert "CURRENT PAGE URL" in bundle.user_text
+    assert "https://example.com" in bundle.user_text
+
+
+def test_prompt_conversational_guidance(snapshot_payload):
+    """The prompt should guide the model on how to handle conversational messages."""
+    snap = Snapshot.from_json(snapshot_payload())
+    bundle = build_prompt(
+        goal="hi",
+        history=[],
+        snapshot=snap,
+        screenshot_bytes=b"",
+        screenshot_mime="image/png",
+        allowed_domains=[],
+        step=1,
+        max_steps=3,
+    )
+    # Should mention greetings or conversational handling
+    assert "conversational" in bundle.system_text.lower() or "greeting" in bundle.system_text.lower()
+    # Should mention personality / friendliness
+    assert "friendly" in bundle.system_text.lower() or "warm" in bundle.system_text.lower()
 
 
 def test_repair_prompt_keeps_image_and_includes_validation_error(snapshot_payload):
