@@ -1,5 +1,10 @@
 import { ChatWindow } from "@/components/chat/ChatWindow";
+import { WebAuthGate } from "@/components/common/WebAuthGate";
 
 export default function ChatPage() {
-  return <ChatWindow />;
+  return (
+    <WebAuthGate>
+      <ChatWindow />
+    </WebAuthGate>
+  );
 }

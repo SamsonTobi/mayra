@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { useCloudAuth } from "@/providers/cloud-auth-context";
 import { isWebMode } from "@/lib/mode";
@@ -8,19 +8,20 @@ import { isWebMode } from "@/lib/mode";
 /**
  * Client-side auth gate for web-deployed mode.
  *
- * In web mode, redirects to /login if not authenticated.
- * In desktop mode, renders children unconditionally (no auth gate).
- *
- * During SSR/static build, always renders children so the HTML has content
- * (the actual gating happens client-side after hydration via useEffect).
- * With static export (`output: "export"`), there are no server-side
- * redirects — the orchestrator is the real security boundary.
+ * - Pages wrapped with <AuthGate loginPage> are always rendered (the login page).
+ * - All other pages: show a loading state until auth is resolved, then
+ *   either render children (authenticated) or redirect to /login.
+ * - In desktop mode: no gating at all.
  */
-export function WebAuthGate({ children }: { children: ReactNode }) {
+export function WebAuthGate({
+  children,
+  loginPage = false,
+}: {
+  children: ReactNode;
+  loginPage?: boolean;
+}) {
   const router = useRouter();
-  const pathname = usePathname();
   const { authenticated } = useCloudAuth();
-  // Only gate after mount — during SSR/build, always show children
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -29,18 +30,39 @@ export function WebAuthGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!isWebMode()) return;
-    if (pathname === "/login") return;
+    if (loginPage) return;
     if (!authenticated) {
       router.replace("/login" as never);
     }
-  }, [isWebMode(), authenticated, pathname, router]);
+  }, [isWebMode(), authenticated, loginPage, router]);
 
-  // During SSR/build (before mount), always render children
-  if (!mounted) return <>{children}</>;
-
-  // After mount:
+  // Desktop mode: no gate
   if (!isWebMode()) return <>{children}</>;
-  if (pathname === "/login") return <>{children}</>;
+
+  // Login page: always render
+  if (loginPage) return <>{children}</>;
+
+  // Web mode, non-login pages:
+  // Before mount: show a minimal loader (prevents flash of content)
+  if (!mounted) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "100vh",
+          background: "var(--bg, #0a0a0a)",
+          color: "var(--fg-muted, #888)",
+          fontSize: "0.9rem",
+        }}
+      >
+        Loading…
+      </div>
+    );
+  }
+
+  // After mount: if not authenticated, show nothing (redirect is in flight)
   if (!authenticated) return null;
 
   return <>{children}</>;

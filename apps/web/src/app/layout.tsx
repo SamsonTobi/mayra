@@ -6,7 +6,6 @@ import { CloudAuthProvider } from "@/providers/cloud-auth-context";
 import { SupabaseBootstrap } from "@/providers/supabase-bootstrap";
 import { BrowserShellHint } from "@/components/common/BrowserShellHint";
 import { AppLayout } from "@/components/common/AppLayout";
-import { WebAuthGate } from "@/components/common/WebAuthGate";
 import { isWebMode } from "@/lib/mode";
 
 export const metadata: Metadata = {
@@ -19,9 +18,6 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // In web mode, the login page is a standalone full-screen page (no sidebar).
-  // We can't use usePathname here (server component), so we conditionally
-  // render AppLayout inside WebAuthGate which is a client component.
   return (
     <html lang="en">
       <body>
@@ -30,9 +26,7 @@ export default function RootLayout({
             <OrchestratorProvider>
               <SupabaseBootstrap />
               <BrowserShellHint />
-              <WebAuthGate>
-                {isWebMode() ? <>{children}</> : <AppLayout>{children}</AppLayout>}
-              </WebAuthGate>
+              {isWebMode() ? <>{children}</> : <AppLayout>{children}</AppLayout>}
             </OrchestratorProvider>
           </CloudAuthProvider>
         </Suspense>
