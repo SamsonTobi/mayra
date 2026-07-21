@@ -179,6 +179,9 @@ export function reduceChatStreamEvent(
             model: parsed.model ?? m.model,
             observation_screenshot_path:
               parsed.observation_screenshot_path ?? m.observation_screenshot_path,
+            // Pass through the cloud screenshot URL so the thumbnail can load it
+            observation_screenshot_url:
+              parsed.observation_screenshot_url ?? (m as Record<string, unknown>).observation_screenshot_url,
           } as typeof m;
           break;
         }

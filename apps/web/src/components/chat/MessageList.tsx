@@ -470,6 +470,7 @@ export function MessageList({ messages, baseUrl, token, onRetry, isDone }: Props
                     <span className="step-action-thumb-spacer">
                       <ChatObservationThumbnail
                         screenshotPath={step.actionMessage.screenshot_path}
+                        screenshotUrl={step.actionMessage.screenshot_url}
                         variant="compact"
                       />
                     </span>
